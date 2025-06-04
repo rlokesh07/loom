@@ -115,12 +115,11 @@ public:
      * @brief Check if state key exists
      */
     bool has_state(const std::string& key) const;
-
     /**
      * @brief Clear all state
      */
     void clear_state();
-
+    
     /**
      * @brief Template method to set typed state
      */
