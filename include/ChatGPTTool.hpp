@@ -2,26 +2,10 @@
 #define CHATGPT_TOOL_HPP
 
 #include "Tool.hpp"
+#include "ChatGPTCompletionEngine.hpp"
 #include <string>
 #include <vector>
-
-/**
- * @brief Message structure for chat conversations
- */
-struct ChatMessage {
-    std::string role;     // "system", "user", or "assistant"
-    std::string content;  // Message content
-
-    ChatMessage(const std::string& role, const std::string& content)
-        : role(role), content(content) {}
-
-    json to_json() const {
-        return {
-            {"role", role},
-            {"content", content}
-        };
-    }
-};
+#include <memory>
 
 /**
  * @brief Tool for interacting with OpenAI's ChatGPT API
@@ -31,23 +15,7 @@ struct ChatMessage {
  */
 class ChatGPTTool : public Tool {
 private:
-    std::string api_key_;
-    std::string base_url_;
-
-    /**
-     * @brief Make HTTP POST request to OpenAI API
-     */
-    std::string make_api_request(const json& request_body) const;
-
-    /**
-     * @brief Extract messages from parameters
-     */
-    std::vector<ChatMessage> extract_messages(const std::any& messages_param) const;
-
-    /**
-     * @brief Load API key from environment variable
-     */
-    std::string load_api_key_from_env() const;
+    std::shared_ptr<ChatGPTCompletionEngine> engine_;
 
 public:
     /**
@@ -73,6 +41,11 @@ public:
      * @brief Check if API key is set
      */
     bool has_api_key() const;
+
+    /**
+     * @brief Get the completion engine
+     */
+    std::shared_ptr<ChatGPTCompletionEngine> get_engine() const { return engine_; }
 
     /**
      * @brief Simple helper for single message completion

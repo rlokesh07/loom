@@ -1,4 +1,4 @@
-#include "Parameter.hpp"
+#include "../include/Parameter.hpp"
 #include <stdexcept>
 
 Parameter::Parameter(const std::string& name,

@@ -15,6 +15,8 @@ add_library(tool_system STATIC
     src/ToolResult.cpp
     src/Tool.cpp
     src/ChatGPTTool.cpp
+    src/ChatGPTAgent.cpp
+    src/ChatGPTCompletionEngine.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -58,5 +60,14 @@ add_executable(chatgpt_example
 )
 
 target_link_libraries(chatgpt_example PRIVATE
+    tool_system
+)
+
+# ChatGPT Agent Test
+add_executable(chatgpt_agent_test
+    examples/chatgpt_agent_test.cpp
+)
+
+target_link_libraries(chatgpt_agent_test PRIVATE
     tool_system
 )

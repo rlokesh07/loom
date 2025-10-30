@@ -1,4 +1,4 @@
-#include "Tool.hpp"
+#include "../include/Tool.hpp"
 #include <stdexcept>
 
 Tool::Tool(const std::string& name, const std::string& description)
