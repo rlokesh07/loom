@@ -1,7 +1,8 @@
 #ifndef GITHUB_TOOL_HPP
 #define GITHUB_TOOL_HPP
 
-#include "../include/Tool.hpp"
+#include "Tool.hpp"
+#include "ToolResult.hpp"
 #include <string>
 
 /**
@@ -12,6 +13,7 @@
  *
  * Currently supported operations:
  * - get_file: Get the contents of a file from a repository
+ * - get_pull_requests: Get the pull requests of a repository
  */
 class GitHubTool : public Tool {
 private:
@@ -44,6 +46,17 @@ private:
      * Optional params: branch (default: main)
      */
     ToolResult execute_get_file(const std::map<std::string, std::any>& params);
+ 
+    /**
+     * @brief Execute get_pull_requests operation
+     *
+     * Gets the pull requests of a GitHub repository.
+     *
+     * Required params: owner, repo
+     * Optional params: state (open, closed, all - default: open)
+     */   
+    ToolResult execute_get_pull_requests(const std::map<std::string, std::any>& params);
+
 
     // Helper methods for parameter extraction
     double get_number_param(const std::any& value) const;
@@ -57,11 +70,12 @@ public:
      * @brief Execute GitHub operation
      *
      * Parameters:
-     * - operation (string): The operation to perform (currently: "get_file")
+     * - operation (string): The operation to perform ("get_file" or "get_pull_requests")
      * - owner (string): Repository owner (username or organization)
      * - repo (string): Repository name
-     * - path (string): File path within the repository
-     * - branch (string, optional): Branch name (default: "main")
+     * - path (string): File path within the repository (required for get_file)
+     * - branch (string, optional): Branch name (default: "main") (for get_file)
+     * - state (string, optional): PR state filter (open, closed, all) (for get_pull_requests)
      */
     ToolResult execute(const std::map<std::string, std::any>& params) override;
 

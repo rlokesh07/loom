@@ -228,6 +228,28 @@ void test_agent_with_tools() {
         std::cout << "\n✗ Test 2 failed: " << result2.get_message() << std::endl;
     }
 
+    // Clear history for next test
+    agent.clear_history();
+
+    // Test 3: Agent should use GitHub pull requests
+    std::map<std::string, std::any> params3 = {
+        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub")},
+        {"system_prompt", std::string("You are a helpful assistant with access to tools. Use them when needed.")},
+        {"model", std::string("gpt-4o-mini")}
+    };
+
+    std::cout << "\n--- Test 3: GitHub Pull Requests ---" << std::endl;
+    std::cout << "User: Get the pull requests from the microsoft/vscode repository on GitHub" << std::endl;
+    std::cout << "Expected: Agent will use GitHub tool with get_pull_requests operation\n" << std::endl;
+
+    auto result3 = agent.execute_safe(params3);
+
+    if (result3.is_success()) {
+        std::cout << "\n✓ Test 3 passed" << std::endl;
+    } else {
+        std::cout << "\n✗ Test 3 failed: " << result3.get_message() << std::endl;
+    }
+
     std::cout << "\n✓ Multi-tool test completed" << std::endl;
 }
 
@@ -242,6 +264,7 @@ int main() {
 ║                                                            ║
 ║  Prerequisites:                                            ║
 ║  - OPENAI_API_KEY environment variable must be set         ║
+║  - GITHUB_TOKEN enviroment variable should be set          ║ 
 ║  - Active internet connection                              ║
 ╚════════════════════════════════════════════════════════════╝
 )" << std::endl;

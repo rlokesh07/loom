@@ -146,6 +146,8 @@ ToolResult GitHubTool::execute(const std::map<std::string, std::any>& params) {
         // Route to appropriate operation handler
         if (operation == "get_file") {
             return execute_get_file(params);
+        } else if (operation == "get_pull_requests") {
+            return execute_get_pull_requests(params);
         } else {
             return ToolResult::Error("Unknown operation: " + operation);
         }
@@ -154,6 +156,57 @@ ToolResult GitHubTool::execute(const std::map<std::string, std::any>& params) {
         return ToolResult::Error("Type conversion error: " + std::string(e.what()));
     } catch (const std::exception& e) {
         return ToolResult::Error("Execution error: " + std::string(e.what()));
+    }
+}
+
+
+ToolResult GitHubTool::execute_get_pull_requests(const std::map<std::string, std::any>& params) {
+    try {
+        // Extract required parameters
+        auto owner_it = params.find("owner");
+        auto repo_it = params.find("repo");
+
+        if (owner_it == params.end() || repo_it == params.end()) {
+            return ToolResult::Error("Missing required parameters: owner and repo are required for get_pull_requests");
+        }
+
+        std::string owner = get_string_param(owner_it->second);
+        std::string repo = get_string_param(repo_it->second);
+
+        // Build endpoint
+        std::string endpoint = "/repos/" + owner + "/" + repo + "/pulls";
+
+        // Make API request
+        std::string response_str = make_github_request(endpoint);
+
+        // Parse response
+        json response = json::parse(response_str);
+
+        // GitHub returns an array of pull request objects
+        if (response.is_array()) {
+            // Build result message
+            std::ostringstream result_msg;
+            result_msg << "Found " << response.size() << " pull requests for " << owner << "/" << repo << ":\n";
+            
+            for (const auto& pr : response) {
+                int number = pr["number"].get<int>();
+                std::string title = pr["title"].get<std::string>();
+                std::string state = pr["state"].get<std::string>();
+                std::string user = pr["user"]["login"].get<std::string>();
+                
+                result_msg << "#" << number << ": " << title << " (" << state << ") by " << user << "\n";
+            }
+
+            // Return success with full response data
+            return ToolResult::Success(response, result_msg.str());
+        } else {
+            return ToolResult::Error("Unexpected response format from GitHub API");
+        }
+
+    } catch (const json::parse_error& e) {
+        return ToolResult::Error("Failed to parse GitHub API response: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        return ToolResult::Error("Error getting pull requests: " + std::string(e.what()));
     }
 }
 
