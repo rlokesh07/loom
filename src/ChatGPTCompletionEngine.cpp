@@ -93,7 +93,9 @@ std::string ChatGPTCompletionEngine::make_api_request(const json& request_body) 
 json ChatGPTCompletionEngine::build_request_body(const std::vector<ChatMessage>& messages,
                                                  const std::string& model,
                                                  double temperature,
-                                                 int max_tokens) const {
+                                                 int max_tokens,
+                                                 const json& tools,
+                                                 const std::string& tool_choice) const {
     json request_body;
 
     // Model
@@ -114,6 +116,12 @@ json ChatGPTCompletionEngine::build_request_body(const std::vector<ChatMessage>&
         request_body["max_tokens"] = max_tokens;
     }
 
+    // Add tools if provided
+    if (!tools.is_null() && !tools.empty()) {
+        request_body["tools"] = tools;
+        request_body["tool_choice"] = tool_choice;
+    }
+
     return request_body;
 }
 
@@ -131,7 +139,18 @@ std::string ChatGPTCompletionEngine::parse_completion_response(const std::string
 
     // Extract completion
     if (response.contains("choices") && !response["choices"].empty()) {
-        return response["choices"][0]["message"]["content"].get<std::string>();
+        const auto& message = response["choices"][0]["message"];
+
+        // Check if content exists and is not null
+        if (message.contains("content") && !message["content"].is_null()) {
+            return message["content"].get<std::string>();
+        }
+
+        // If no content but there are tool calls, return empty string
+        // (tool calls will be handled separately)
+        if (message.contains("tool_calls")) {
+            return "";
+        }
     }
 
     throw std::runtime_error("No completion in response");

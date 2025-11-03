@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(loom VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -17,6 +17,8 @@ add_library(tool_system STATIC
     src/ChatGPTTool.cpp
     src/ChatGPTAgent.cpp
     src/ChatGPTCompletionEngine.cpp
+    src/ToolRegistry.cpp
+    src/GitHubTool.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -66,6 +68,7 @@ target_link_libraries(chatgpt_example PRIVATE
 # ChatGPT Agent Test
 add_executable(chatgpt_agent_test
     examples/chatgpt_agent_test.cpp
+    examples/CalculatorTool.cpp
 )
 
 target_link_libraries(chatgpt_agent_test PRIVATE

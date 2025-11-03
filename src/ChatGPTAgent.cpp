@@ -1,12 +1,17 @@
 #include "../include/ChatGPTAgent.hpp"
+#include <any>
+#include <charconv>
 #include <iostream>
-
+#include <format>
 ChatGPTAgent::ChatGPTAgent(bool verbose)
     : Tool("chatgpt_agent", "Agentic ChatGPT wrapper with conversation memory"),
       engine_(std::make_shared<ChatGPTCompletionEngine>()),
-      verbose_(verbose) {
+      verbose_(verbose),
+      tool_registry_(nullptr) {
 
     // Define parameters - simpler than ChatGPTTool since we maintain history
+    add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
+
     add_parameter(Parameter("message", ParameterType::STRING,
                            "User message to add to conversation", true));
 
@@ -87,36 +92,73 @@ ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) 
             max_tokens = std::any_cast<int>(max_tokens_it->second);
         }
 
-        // Build request body using the engine
-        json request_body = engine_->build_request_body(
-            conversation_history_,
-            model,
-            temperature,
-            max_tokens
-        );
-
-        // Make API request
-        std::string response_str = engine_->make_api_request(request_body);
-
-        // Parse response
-        json full_response;
-        std::string completion = engine_->parse_completion_response(response_str, full_response);
-
-        // Add assistant response to history
-        conversation_history_.emplace_back("assistant", completion);
-
-        // Print to cout if verbose mode is enabled
-        if (verbose_) {
-            std::cout << "Assistant: " << completion << std::endl;
-        }
-
-        // Return full response as data for advanced usage
-        return ToolResult::Success(full_response, completion);
+        // Execute LLM call with tool support (this handles tool calling loop)
+        return execute_llm_call(model, temperature, max_tokens);
 
     } catch (const std::bad_any_cast& e) {
         return ToolResult::Error("Type conversion error: " + std::string(e.what()));
     } catch (const std::exception& e) {
         return ToolResult::Error("Execution error: " + std::string(e.what()));
+    }
+}
+
+
+void ChatGPTAgent::talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2){
+    auto agent1Name_it = params1.find("name");
+    auto agent2Name_it = params2.find("name");
+
+    std::string agent1Name = std::any_cast<std::string>(agent1Name_it->second);
+    std::string agent2Name = std::any_cast<std::string>(agent2Name_it->second);
+
+    // Initialize agent1 with system prompt - agent1 starts the conversation
+    params1.insert_or_assign("message", std::format("You are talking to {}. Start the conversation.", agent2Name));
+    auto init1 = execute_safe(params1);
+    if (!init1.is_success()) {
+        std::cout << "✗ Agent 1 init failed: " << init1.get_message() << std::endl;
+        return;
+    }
+    std::string agent1_msg = init1.get_message();
+
+    // Initialize agent2 with system prompt only (no message yet)
+    auto system_prompt_it = params2.find("system_prompt");
+    if (system_prompt_it != params2.end()) {
+        std::string system_prompt = std::any_cast<std::string>(system_prompt_it->second);
+        agent2.add_message("system", system_prompt);
+    }
+
+    int MAX_TURNS = 100;
+    std::string agent2_msg;
+
+    for (int i = 0; i < MAX_TURNS; i++) {
+        // Agent2 responds to agent1's message
+        auto agent2Res = agent2.complete(agent1_msg);
+        if (!agent2Res.is_success()) {
+            auto error = agent2Res.get_error();
+            std::cout << "✗ Agent 2 failed: " << (error.has_value() ? *error : "Unknown error") << std::endl;
+            break;
+        }
+        agent2_msg = agent2Res.get_message();
+
+        if (agent2_msg.find("COMPLETE") != std::string::npos ||
+            agent1_msg.find("COMPLETE") != std::string::npos) {
+            std::cout << "\n--- Conversation Complete ---" << std::endl;
+            break;
+        }
+
+        // Agent1 responds to agent2's message
+        auto agent1Res = complete(agent2_msg);
+        if (!agent1Res.is_success()) {
+            auto error = agent1Res.get_error();
+            std::cout << "✗ Agent 1 failed: " << (error.has_value() ? *error : "Unknown error") << std::endl;
+            break;
+        }
+        agent1_msg = agent1Res.get_message();
+
+        if (agent1_msg.find("COMPLETE") != std::string::npos ||
+            agent2_msg.find("COMPLETE") != std::string::npos) {
+            std::cout << "\n--- Conversation Complete ---" << std::endl;
+            break;
+        }
     }
 }
 
@@ -138,4 +180,115 @@ void ChatGPTAgent::add_message(const std::string& role, const std::string& conte
 
 void ChatGPTAgent::clear_history() {
     conversation_history_.clear();
+}
+
+ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
+    try {
+        // Prepare tools schema if available
+        json tools_schema = json(nullptr);
+        if (has_tools() && tool_registry_->size() > 0) {
+            tools_schema = tool_registry_->get_all_schemas();
+        }
+
+        // Build request body with tools
+        json request_body = engine_->build_request_body(
+            conversation_history_,
+            model,
+            temperature,
+            max_tokens,
+            tools_schema,
+            "auto"
+        );
+
+        // Make API request
+        std::string response_str = engine_->make_api_request(request_body);
+
+        // Parse response
+        json full_response;
+        std::string completion = engine_->parse_completion_response(response_str, full_response);
+
+        // Check if there are tool calls in the response
+        if (full_response.contains("choices") && !full_response["choices"].empty()) {
+            const auto& message = full_response["choices"][0]["message"];
+
+            if (message.contains("tool_calls") && !message["tool_calls"].is_null()) {
+                // Add assistant message with tool calls to history
+                ChatMessage assistant_msg("assistant", "");
+                assistant_msg.tool_calls = message["tool_calls"];
+                conversation_history_.push_back(assistant_msg);
+
+                if (verbose_) {
+                    std::cout << "\nAssistant is calling tools..." << std::endl;
+
+                    // Display each tool call
+                    for (const auto& tool_call : message["tool_calls"]) {
+                        std::string tool_name = tool_call["function"]["name"].get<std::string>();
+                        std::string tool_args = tool_call["function"]["arguments"].get<std::string>();
+                        std::cout << "  → Tool: " << tool_name << std::endl;
+                        std::cout << "    Arguments: " << tool_args << std::endl;
+                    }
+                    std::cout << std::endl;
+                }
+
+                // Process tool calls
+                process_tool_calls(message["tool_calls"]);
+
+                // Make another LLM call with tool results
+                return execute_llm_call(model, temperature, max_tokens);
+            }
+        }
+
+        // No tool calls - add regular assistant response to history
+        conversation_history_.emplace_back("assistant", completion);
+
+        // Print to cout if verbose mode is enabled
+        if (verbose_) {
+            std::cout << "Assistant: " << completion << std::endl;
+        }
+
+        // Return full response as data for advanced usage
+        return ToolResult::Success(full_response, completion);
+
+    } catch (const std::exception& e) {
+        return ToolResult::Error("LLM execution error: " + std::string(e.what()));
+    }
+}
+
+void ChatGPTAgent::process_tool_calls(const json& tool_calls) {
+    if (!has_tools()) {
+        throw std::runtime_error("Tool calls requested but no tool registry available");
+    }
+
+    for (const auto& tool_call : tool_calls) {
+        std::string tool_call_id = tool_call["id"].get<std::string>();
+        std::string tool_name = tool_call["function"]["name"].get<std::string>();
+        json tool_args = json::parse(tool_call["function"]["arguments"].get<std::string>());
+
+        if (verbose_) {
+            std::cout << "Executing: " << tool_name << "(" << tool_args.dump() << ")" << std::endl;
+        }
+
+        // Execute the tool
+        ToolResult result = tool_registry_->execute_tool(tool_name, tool_args);
+
+        // Prepare tool response message
+        std::string tool_response;
+        if (result.is_success()) {
+            tool_response = result.get_message();
+            if (verbose_) {
+                std::cout << "  ✓ Result: " << tool_response << std::endl;
+            }
+        } else {
+            auto error = result.get_error();
+            tool_response = "Error: " + (error.has_value() ? *error : "Unknown error");
+            if (verbose_) {
+                std::cout << "  ✗ Error: " << tool_response << std::endl;
+            }
+        }
+
+        // Add tool response to conversation history
+        ChatMessage tool_msg("tool", tool_response);
+        tool_msg.tool_call_id = tool_call_id;
+        conversation_history_.push_back(tool_msg);
+    }
 }
