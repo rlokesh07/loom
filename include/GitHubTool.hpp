@@ -57,6 +57,9 @@ private:
      */   
     ToolResult execute_get_pull_requests(const std::map<std::string, std::any>& params);
 
+    ToolResult execute_get_pull_request_details(const std::map<std::string, std::any>& params);
+
+    ToolResult execute_get_pull_request_files(const std::map<std::string, std::any>& params);
 
     // Helper methods for parameter extraction
     double get_number_param(const std::any& value) const;

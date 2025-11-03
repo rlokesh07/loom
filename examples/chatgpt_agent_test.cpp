@@ -233,14 +233,14 @@ void test_agent_with_tools() {
 
     // Test 3: Agent should use GitHub pull requests
     std::map<std::string, std::any> params3 = {
-        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub")},
+        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub. Find one that you find interesting and look at its details")},
         {"system_prompt", std::string("You are a helpful assistant with access to tools. Use them when needed.")},
         {"model", std::string("gpt-4o-mini")}
     };
 
     std::cout << "\n--- Test 3: GitHub Pull Requests ---" << std::endl;
-    std::cout << "User: Get the pull requests from the microsoft/vscode repository on GitHub" << std::endl;
-    std::cout << "Expected: Agent will use GitHub tool with get_pull_requests operation\n" << std::endl;
+    std::cout << "User: Get the pull requests from the microsoft/vscode repository on GitHub and find one it likes, then call the pull request details call on it" << std::endl;
+    std::cout << "Expected: Agent will use GitHub tool with get_pull_requests operation and get_pull_request_details operation\n" << std::endl;
 
     auto result3 = agent.execute_safe(params3);
 
