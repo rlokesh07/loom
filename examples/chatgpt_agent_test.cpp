@@ -1,9 +1,11 @@
 #include "../include/ChatGPTAgent.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/GitHubTool.hpp"
+#include "../include/Base64Tool.hpp"
 #include "./CalculatorTool.hpp"
 #include <iostream>
 #include <cassert>
+#include <memory>
 
 /**
  * Test suite for ChatGPTAgent with focus on verbose mode functionality
@@ -174,9 +176,22 @@ void test_agent_with_tools() {
     // Create and register both tools
     auto calculator = std::make_shared<CalculatorTool>();
     auto github = std::make_shared<GitHubTool>();
+    auto base64 = std::make_shared<Base64Tool>();
     auto registry = std::make_shared<ToolRegistry>();
+    auto cleanCodeAgent = std::make_shared<ChatGPTAgent>(true);
+
+    cleanCodeAgent->set_name("cleanCodeAgent");
+    cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
+    cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
+
+
+
+
     registry->register_tool(calculator);
     registry->register_tool(github);
+    registry->register_tool(cleanCodeAgent);
+    registry->register_tool(base64);
+
 
     std::cout << "✓ Registered " << registry->size() << " tool(s): ";
     for (const auto& tool_name : registry->list_tools()) {
@@ -230,10 +245,10 @@ void test_agent_with_tools() {
 
     // Clear history for next test
     agent.clear_history();
-
+                                             
     // Test 3: Agent should use GitHub pull requests
     std::map<std::string, std::any> params3 = {
-        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub. Find one that you find interesting and look at its details")},
+        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub. Find the most technical sounding one and look at its details. Make sure that all the files are following clean code principles by passing the actual code from the github to the clean code agent")},
         {"system_prompt", std::string("You are a helpful assistant with access to tools. Use them when needed.")},
         {"model", std::string("gpt-4o-mini")}
     };

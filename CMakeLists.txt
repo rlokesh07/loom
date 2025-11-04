@@ -19,6 +19,7 @@ add_library(tool_system STATIC
     src/ChatGPTCompletionEngine.cpp
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
+    src/Base64Tool.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -72,5 +73,14 @@ add_executable(chatgpt_agent_test
 )
 
 target_link_libraries(chatgpt_agent_test PRIVATE
+    tool_system
+)
+
+# Base64 Example
+add_executable(base64_example
+    examples/base64_example.cpp
+)
+
+target_link_libraries(base64_example PRIVATE
     tool_system
 )

@@ -67,6 +67,10 @@ public:
     const std::string& get_description() const { return description_; }
     const std::vector<Parameter>& get_parameters() const { return parameters_; }
 
+    // Setters
+    void set_name(const std::string& name) { name_ = name; }
+    void set_description(const std::string& description) { description_ = description; }
+
     /**
      * @brief Add a parameter definition to this tool
      */

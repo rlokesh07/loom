@@ -237,7 +237,6 @@ ToolResult GitHubTool::execute_get_pull_request_files(const std::map<std::string
 }
 
 
-T
 ToolResult GitHubTool::execute_get_pull_request_details(const std::map<std::string, std::any>& params) {
     try {
         // Extract required parameters
