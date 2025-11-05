@@ -95,6 +95,30 @@ public:
      * @brief Clear all registered tools
      */
     void clear();
+
+    /**
+     * @brief Register a tool by constructing it in-place
+     *
+     * Template method that constructs a tool and registers it in one step,
+     * eliminating the need to call std::make_shared explicitly.
+     *
+     * @tparam T Tool type to construct (must inherit from Tool)
+     * @tparam Args Constructor argument types
+     * @param args Arguments to forward to the tool's constructor
+     * @return std::shared_ptr<T> Shared pointer to the created and registered tool
+     *
+     * @example
+     * auto calculator = registry->register_tool<CalculatorTool>();
+     * auto agent = registry->register_tool<ChatGPTAgent>(true); // verbose=true
+     */
+    template<typename T, typename... Args>
+    std::shared_ptr<T> register_tool(Args&&... args) {
+        static_assert(std::is_base_of<Tool, T>::value,
+                      "T must inherit from Tool");
+        auto tool = std::make_shared<T>(std::forward<Args>(args)...);
+        register_tool(tool);  // Call the existing non-template version
+        return tool;
+    }
 };
 
 /**

@@ -152,8 +152,8 @@ void test_multi_agent_system_prompt_with_verbose() {
 void test_agent_with_tools() {
     std::cout << "\n=== Test: Agent with Multiple Tools ===" << std::endl;
 
-    ChatGPTAgent agent(true);
 
+    ChatGPTAgent agent(true);
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
         return;
@@ -173,24 +173,17 @@ void test_agent_with_tools() {
 
     std::cout << "Testing agent with multiple tools (calculator and GitHub)\n" << std::endl;
 
-    // Create and register both tools
-    auto calculator = std::make_shared<CalculatorTool>();
-    auto github = std::make_shared<GitHubTool>();
-    auto base64 = std::make_shared<Base64Tool>();
+    // Create and register tools using template method
     auto registry = std::make_shared<ToolRegistry>();
-    auto cleanCodeAgent = std::make_shared<ChatGPTAgent>(true);
 
+    registry->register_tool<CalculatorTool>();
+    registry->register_tool<GitHubTool>();
+    registry->register_tool<Base64Tool>();
+
+    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
     cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
     cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
-
-
-
-
-    registry->register_tool(calculator);
-    registry->register_tool(github);
-    registry->register_tool(cleanCodeAgent);
-    registry->register_tool(base64);
 
 
     std::cout << "✓ Registered " << registry->size() << " tool(s): ";
@@ -267,7 +260,32 @@ void test_agent_with_tools() {
 
     std::cout << "\n✓ Multi-tool test completed" << std::endl;
 }
+void agent_call_agent(){
+    auto registry = std::make_shared<ToolRegistry>();
 
+    // Register tools using template method - no make_shared needed!
+    registry->register_tool<CalculatorTool>();
+    registry->register_tool<GitHubTool>();
+    registry->register_tool<Base64Tool>();
+
+    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
+    cleanCodeAgent->set_name("cleanCodeAgent");
+    cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
+    cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
+
+    ChatGPTAgent agent(true);
+    
+    agent.set_tool_registry(registry);
+
+    std::map<std::string, std::any> params = {
+        {"message", std::string("Get the pull requests from the microsoft/vscode repository on GitHub. Find the most technical sounding one and look at its details. Make sure that all the files are following clean code principles by passing the actual code from the github to the clean code agent")},
+        {"system_prompt", std::string("You are a helpful assistant with access to tools. Use them when needed.")},
+        {"model", std::string("gpt-4o-mini")}
+    };
+
+ 
+    auto result = agent.execute_safe(params);
+}
 
 int main() {
     std::cout << R"(
@@ -301,7 +319,7 @@ int main() {
         test_verbose_constructor();
         test_system_prompt_with_verbose();
         test_multi_agent_system_prompt_with_verbose();
-        test_agent_with_tools();
+        agent_call_agent();
 
         std::cout << "\nTest suite finished successfully!" << std::endl;
 
