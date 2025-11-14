@@ -16,7 +16,9 @@ add_library(tool_system STATIC
     src/Tool.cpp
     src/ChatGPTTool.cpp
     src/ChatGPTAgent.cpp
+    src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
+    src/OllamaCompletionEngine.cpp
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
@@ -82,5 +84,14 @@ add_executable(base64_example
 )
 
 target_link_libraries(base64_example PRIVATE
+    tool_system
+)
+
+# Ollama Test
+add_executable(ollama_test
+    examples/ollama_test.cpp
+)
+
+target_link_libraries(ollama_test PRIVATE
     tool_system
 )
