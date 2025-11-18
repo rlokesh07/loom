@@ -1,5 +1,5 @@
-#ifndef CHATGPT_AGENT_HPP
-#define CHATGPT_AGENT_HPP
+#ifndef AGENT_HPP
+#define AGENT_HPP
 
 #include "Tool.hpp"
 #include "CompletionEngine.hpp"
@@ -19,7 +19,7 @@
  * - Has memory across multiple execute() calls
  * - Supports any CompletionEngine (ChatGPT, Ollama, etc.)
  */
-class ChatGPTAgent : public Tool {
+class Agent : public Tool {
 private:
     std::shared_ptr<CompletionEngine> engine_;
     std::vector<ChatMessage> conversation_history_;
@@ -29,12 +29,12 @@ private:
 
 public:
     /**
-     * @brief Construct a new ChatGPTAgent with ChatGPT engine
+     * @brief Construct a new Agent with ChatGPT engine (default)
      *
      * Automatically loads API key from OPENAI_API_KEY environment variable
      * @param verbose If true, all responses will be printed to cout
      */
-    ChatGPTAgent(bool verbose = false);
+    Agent(bool verbose = false);
 
     /**
      * @brief Construct with custom completion engine
@@ -43,9 +43,9 @@ public:
      * @param default_model Default model name to use
      * @param verbose If true, all responses will be printed to cout
      */
-    ChatGPTAgent(std::shared_ptr<CompletionEngine> engine,
-                 const std::string& default_model = "gpt-3.5-turbo",
-                 bool verbose = false);
+    Agent(std::shared_ptr<CompletionEngine> engine,
+          const std::string& default_model = "gpt-3.5-turbo",
+          bool verbose = false);
 
     /**
      * @brief Execute chat completion with conversation history
@@ -83,7 +83,7 @@ public:
 
     bool is_verbose() const { return verbose_; }
 
-    void talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2);
+    void talk(Agent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2);
 
     // Tool registry methods
     void set_tool_registry(ToolRegistryPtr registry) { tool_registry_ = registry; }
@@ -109,4 +109,4 @@ private:
     void process_tool_calls(const json& tool_calls);
 };
 
-#endif // CHATGPT_AGENT_HPP
+#endif // AGENT_HPP

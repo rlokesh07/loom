@@ -114,7 +114,7 @@ auto registry = std::make_shared<ToolRegistry>();
 registry->register_tool(github);
 
 // Agent can now use GitHub tool
-ChatGPTAgent agent(true);
+Agent agent(true);
 agent.set_tool_registry(registry);
 
 // Example: "List all the issues in the torvalds/linux repository"

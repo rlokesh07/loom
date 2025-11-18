@@ -1,18 +1,20 @@
-#include "../include/ChatGPTAgent.hpp"
+#include "../include/Agent.hpp"
 #include "../include/OllamaCompletionEngine.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/WebSearchTool.hpp"
+#include "../include/WebFetchTool.hpp"
 #include "../include/Base64Tool.hpp"
 #include <iostream>
 #include <memory>
 
 /**
- * WebSearch Tool Example
+ * WebSearch & WebFetch Tool Example
  *
  * Demonstrates:
  * 1. Direct WebSearchTool usage
- * 2. Integration with ChatGPTAgent for autonomous web search
+ * 2. Integration with Agent for autonomous web search
  * 3. Integration with Ollama for local LLM web search
+ * 4. Combined WebSearch + WebFetch for full research workflow
  *
  * Prerequisites:
  * - BRAVE_SEARCH_API_KEY environment variable set
@@ -71,7 +73,7 @@ void test_chatgpt_with_websearch() {
     std::cout << "✓ Both API keys are set\n" << std::endl;
 
     // Create agent and registry
-    ChatGPTAgent agent(true);  // Verbose mode
+    Agent agent(true);  // Verbose mode
     auto registry = std::make_shared<ToolRegistry>();
 
     // Register WebSearch tool
@@ -113,7 +115,7 @@ void test_ollama_with_websearch() {
     try {
         // Create Ollama engine and agent
         auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
-        ChatGPTAgent ollama_agent(ollama_engine, "llama3.1:8b", true);
+        Agent ollama_agent(ollama_engine, "llama3.1:8b", true);
 
         std::cout << "✓ Created Ollama agent with llama3.1:8b model" << std::endl;
 
@@ -150,7 +152,7 @@ void test_ollama_with_websearch() {
 }
 
 void test_multi_tool_research() {
-    std::cout << "\n=== Test 4: Multi-Tool Research (WebSearch + Base64) ===" << std::endl;
+    std::cout << "\n=== Test 4: Multi-Tool Research (WebSearch + WebFetch) ===" << std::endl;
 
     const char* openai_key = std::getenv("OPENAI_API_KEY");
     const char* brave_key = std::getenv("BRAVE_SEARCH_API_KEY");
@@ -160,12 +162,12 @@ void test_multi_tool_research() {
         return;
     }
 
-    ChatGPTAgent agent(true);
+    Agent agent(true);
     auto registry = std::make_shared<ToolRegistry>();
 
-    // Register multiple tools
+    // Register web research tools
     registry->register_tool<WebSearchTool>();
-    registry->register_tool<Base64Tool>();
+    registry->register_tool<WebFetchTool>();
 
     std::cout << "✓ Registered " << registry->size() << " tools: ";
     for (const auto& tool_name : registry->list_tools()) {
@@ -176,18 +178,18 @@ void test_multi_tool_research() {
     agent.set_tool_registry(registry);
 
     std::map<std::string, std::any> params = {
-        {"message", std::string("Search the web for information about 'Claude AI assistant'. Then encode the word 'WEBSEARCH' in base64 for me.")},
-        {"system_prompt", std::string("You are a helpful assistant with multiple tools. Use them as needed.")},
+        {"message", std::string("Search for 'C++ best practices' on the web, then fetch and read the content from the top result to give me a summary of the key points.")},
+        {"system_prompt", std::string("You are a research assistant. First use web_search to find relevant pages, then use web_fetch to read their content and provide summaries.")},
         {"model", std::string("gpt-4o-mini")}
     };
 
-    std::cout << "User: Search for Claude AI and encode 'WEBSEARCH' in base64" << std::endl;
-    std::cout << "Expected: Agent will use both web_search and base64_encode tools\n" << std::endl;
+    std::cout << "User: Search for C++ best practices and read the top result" << std::endl;
+    std::cout << "Expected: Agent will search the web, then fetch and read the top URL\n" << std::endl;
 
     auto result = agent.execute_safe(params);
 
     if (result.is_success()) {
-        std::cout << "\n✓ Multi-tool test passed" << std::endl;
+        std::cout << "\n✓ Multi-tool research test passed" << std::endl;
     } else {
         std::cout << "\n✗ Test failed: " << result.get_message() << std::endl;
     }
@@ -196,13 +198,15 @@ void test_multi_tool_research() {
 int main() {
     std::cout << R"(
 ╔════════════════════════════════════════════════════════════╗
-║              WebSearch Tool Example & Test Suite           ║
+║         WebSearch & WebFetch Tool Example Suite           ║
 ║                                                            ║
-║  This demonstrates the Brave Search API integration       ║
-║  with both direct usage and agent-driven search.          ║
+║  Demonstrates web research capabilities:                  ║
+║  - WebSearch: Search the web using Brave Search API       ║
+║  - WebFetch: Fetch and read content from URLs             ║
+║  - Combined workflow: Search → Fetch → Analyze            ║
 ║                                                            ║
 ║  Prerequisites:                                            ║
-║  - BRAVE_SEARCH_API_KEY (required for all tests)          ║
+║  - BRAVE_SEARCH_API_KEY (required for search tests)       ║
 ║    Get yours at: https://api.search.brave.com/app/keys    ║
 ║  - OPENAI_API_KEY (optional, for ChatGPT tests)           ║
 ║  - Ollama running locally (optional, for Ollama tests)    ║

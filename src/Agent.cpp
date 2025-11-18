@@ -1,10 +1,10 @@
-#include "../include/ChatGPTAgent.hpp"
+#include "../include/Agent.hpp"
 #include <any>
 #include <charconv>
 #include <iostream>
 #include <format>
-ChatGPTAgent::ChatGPTAgent(bool verbose)
-    : Tool("chatgpt_agent", "Agentic ChatGPT wrapper with conversation memory"),
+Agent::Agent(bool verbose)
+    : Tool("agent", "Agentic LLM wrapper with conversation memory"),
       engine_(std::make_shared<ChatGPTCompletionEngine>()),
       verbose_(verbose),
       tool_registry_(nullptr),
@@ -37,10 +37,10 @@ ChatGPTAgent::ChatGPTAgent(bool verbose)
     add_parameter(verbose_param);
 }
 
-ChatGPTAgent::ChatGPTAgent(std::shared_ptr<CompletionEngine> engine,
-                           const std::string& default_model,
-                           bool verbose)
-    : Tool("chatgpt_agent", "Agentic LLM wrapper with conversation memory"),
+Agent::Agent(std::shared_ptr<CompletionEngine> engine,
+             const std::string& default_model,
+             bool verbose)
+    : Tool("agent", "Agentic LLM wrapper with conversation memory"),
       engine_(engine),
       verbose_(verbose),
       tool_registry_(nullptr),
@@ -67,7 +67,7 @@ ChatGPTAgent::ChatGPTAgent(std::shared_ptr<CompletionEngine> engine,
     add_parameter(verbose_param);
 }
 
-bool ChatGPTAgent::has_api_key() const {
+bool Agent::has_api_key() const {
     // Try to cast to ChatGPTCompletionEngine to check for API key
     auto chatgpt_engine = std::dynamic_pointer_cast<ChatGPTCompletionEngine>(engine_);
     if (chatgpt_engine) {
@@ -77,7 +77,7 @@ bool ChatGPTAgent::has_api_key() const {
     return true;
 }
 
-ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) {
+ToolResult Agent::execute(const std::map<std::string, std::any>& params) {
     // Check API key
     if (!has_api_key()) {
         return ToolResult::Error("OPENAI_API_KEY environment variable not set");
@@ -140,7 +140,7 @@ ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) 
 }
 
 
-void ChatGPTAgent::talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2){
+void Agent::talk(Agent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2){
     auto agent1Name_it = params1.find("name");
     auto agent2Name_it = params2.find("name");
 
@@ -199,7 +199,7 @@ void ChatGPTAgent::talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& p
     }
 }
 
-ToolResult ChatGPTAgent::complete(const std::string& user_message,
+ToolResult Agent::complete(const std::string& user_message,
                                   const std::string& model,
                                   double temperature) {
     std::map<std::string, std::any> params = {
@@ -211,15 +211,15 @@ ToolResult ChatGPTAgent::complete(const std::string& user_message,
     return execute_safe(params);
 }
 
-void ChatGPTAgent::add_message(const std::string& role, const std::string& content) {
+void Agent::add_message(const std::string& role, const std::string& content) {
     conversation_history_.emplace_back(role, content);
 }
 
-void ChatGPTAgent::clear_history() {
+void Agent::clear_history() {
     conversation_history_.clear();
 }
 
-ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
+ToolResult Agent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
     try {
         // Prepare tools schema if available
         json tools_schema = json(nullptr);
@@ -291,7 +291,7 @@ ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double tempe
     }
 }
 
-void ChatGPTAgent::process_tool_calls(const json& tool_calls) {
+void Agent::process_tool_calls(const json& tool_calls) {
     if (!has_tools()) {
         throw std::runtime_error("Tool calls requested but no tool registry available");
     }

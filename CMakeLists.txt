@@ -15,7 +15,7 @@ add_library(tool_system STATIC
     src/ToolResult.cpp
     src/Tool.cpp
     src/ChatGPTTool.cpp
-    src/ChatGPTAgent.cpp
+    src/Agent.cpp
     src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
     src/OllamaCompletionEngine.cpp

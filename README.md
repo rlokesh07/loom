@@ -11,6 +11,7 @@ A flexible, type-safe tool execution framework for C++ agents and LLM integratio
 - **Extensible**: Easy to create custom tools by inheriting from the base `Tool` class
 - **Built-in Tools**:
   - **WebSearchTool**: Search the web using Brave Search API
+  - **WebFetchTool**: Fetch and read content from web URLs (no API key needed)
   - **GitHubTool**: Interact with GitHub repositories (read files, list PRs, etc.)
   - **Base64Tool**: Encode/decode base64 strings
   - **CalculatorTool**: Perform basic arithmetic operations
@@ -144,12 +145,12 @@ if (result.is_success()) {
 #### Agent Integration with WebSearch
 
 ```cpp
-#include "ChatGPTAgent.hpp"
+#include "Agent.hpp"
 #include "ToolRegistry.hpp"
 #include "WebSearchTool.hpp"
 
 // Create agent and registry
-ChatGPTAgent agent(true);  // Verbose mode
+Agent agent(true);  // Verbose mode
 auto registry = std::make_shared<ToolRegistry>();
 
 // Register tools
@@ -165,6 +166,54 @@ std::map<std::string, std::any> params = {
 
 auto result = agent.execute_safe(params);
 // Agent will automatically search the web and summarize findings
+```
+
+#### WebFetch Tool
+
+```cpp
+#include "WebFetchTool.hpp"
+
+// Direct usage
+WebFetchTool fetch_tool;
+
+std::map<std::string, std::any> params = {
+    {"url", std::string("https://example.com/article")},
+    {"max_length", 5000}  // Optional: max characters (default: 10000)
+};
+
+ToolResult result = fetch_tool.execute(params);
+
+if (result.is_success()) {
+    json data = result.get_data_as<json>();
+    std::cout << "Content from: " << data["url"] << std::endl;
+    std::cout << data["content"] << std::endl;  // HTML converted to plain text
+}
+```
+
+#### Combined WebSearch + WebFetch
+
+```cpp
+#include "Agent.hpp"
+#include "ToolRegistry.hpp"
+#include "WebSearchTool.hpp"
+#include "WebFetchTool.hpp"
+
+Agent agent(true);
+auto registry = std::make_shared<ToolRegistry>();
+
+// Register both tools for full research capability
+registry->register_tool<WebSearchTool>();
+registry->register_tool<WebFetchTool>();
+agent.set_tool_registry(registry);
+
+std::map<std::string, std::any> params = {
+    {"message", std::string("Research recent C++ developments, find articles, and summarize the key points from the top result.")},
+    {"system_prompt", std::string("You are a research assistant. Use web_search to find pages, then web_fetch to read their content.")},
+    {"model", std::string("gpt-4o-mini")}
+};
+
+auto result = agent.execute_safe(params);
+// Agent will: 1) Search web, 2) Fetch top URL, 3) Read content, 4) Summarize
 ```
 
 ### Creating Custom Tools

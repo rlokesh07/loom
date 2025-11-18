@@ -576,7 +576,7 @@ Each tool has:
 ### 10.4 Minimal Integration Complexity
 
 No need to handle:
-- Tool calling loops (ChatGPTAgent feature)
+- Tool calling loops (Agent feature)
 - Conversation history management
 - Cross-tool communication
 - Stateful operations

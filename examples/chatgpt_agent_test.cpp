@@ -1,4 +1,4 @@
-#include "../include/ChatGPTAgent.hpp"
+#include "../include/Agent.hpp"
 #include "../include/OllamaCompletionEngine.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/GitHubTool.hpp"
@@ -11,7 +11,7 @@
 #include <memory>
 
 /**
- * Test suite for ChatGPTAgent with focus on verbose mode functionality
+ * Test suite for Agent with focus on verbose mode functionality
  *
  * This demonstrates:
  * 1. Verbose mode enabled via constructor
@@ -26,7 +26,7 @@
 void test_verbose_constructor() {
 
     // Create agent with verbose=true
-    ChatGPTAgent agent(true);
+    Agent agent(true);
 
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -51,7 +51,7 @@ void test_verbose_constructor() {
 
 void test_system_prompt_with_verbose() {
 
-    ChatGPTAgent agent(true);  // Verbose on
+    Agent agent(true);  // Verbose on
 
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -93,8 +93,8 @@ void test_system_prompt_with_verbose() {
 }
 void test_multi_agent_system_prompt_with_verbose() {
 
-    ChatGPTAgent sales(true);  // Verbose on
-    ChatGPTAgent customer(true);  // Verbose on
+    Agent sales(true);  // Verbose on
+    Agent customer(true);  // Verbose on
 
     if (!sales.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -156,7 +156,7 @@ void test_agent_with_tools() {
     std::cout << "\n=== Test: Agent with Multiple Tools ===" << std::endl;
 
 
-    ChatGPTAgent agent(true);
+    Agent agent(true);
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
         return;
@@ -183,7 +183,7 @@ void test_agent_with_tools() {
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
 
-    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
+    auto cleanCodeAgent = registry->register_tool<Agent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
     cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
     cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
@@ -270,12 +270,12 @@ void agent_call_agent(){
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
 
-    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
+    auto cleanCodeAgent = registry->register_tool<Agent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
     cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
     cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
 
-    ChatGPTAgent agent(true);
+    Agent agent(true);
 
     agent.set_tool_registry(registry);
 
@@ -297,7 +297,7 @@ void test_ollama_agent() {
         auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
 
         // Create agent with Ollama engine
-        ChatGPTAgent ollama_agent(ollama_engine, "llama3.1:8b", true);
+        Agent ollama_agent(ollama_engine, "llama3.1:8b", true);
 
         std::cout << "Testing Ollama agent with llama3.2 model\n" << std::endl;
 
@@ -341,13 +341,13 @@ void test_ollama_to_chatgpt_conversation() {
         registry->register_tool<WebFetchTool>();
             // Create Ollama agent
         auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
-        ChatGPTAgent ollama_agent(ollama_engine, "llama3.1:8b", true);
+        Agent ollama_agent(ollama_engine, "llama3.1:8b", true);
     
         ollama_agent.set_tool_registry(registry);
 
 
         // Create ChatGPT agent
-        ChatGPTAgent chatgpt_agent(true);
+        Agent chatgpt_agent(true);
         
         chatgpt_agent.set_tool_registry(registry);
 
@@ -380,7 +380,7 @@ int main() {
 ║           ChatGPT Agent Verbose Mode Test Suite            ║
 ║                                                            ║
 ║  This test suite demonstrates the verbose parameter        ║
-║  functionality for the ChatGPTAgent class.                 ║
+║  functionality for the Agent class.                 ║
 ║                                                            ║
 ║  Prerequisites:                                            ║
 ║  - OPENAI_API_KEY environment variable must be set         ║
