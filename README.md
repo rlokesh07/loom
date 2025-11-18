@@ -9,6 +9,11 @@ A flexible, type-safe tool execution framework for C++ agents and LLM integratio
 - **JSON schema generation**: Automatic generation of JSON schemas for LLM function calling
 - **State management**: Built-in state management for stateful tools
 - **Extensible**: Easy to create custom tools by inheriting from the base `Tool` class
+- **Built-in Tools**:
+  - **WebSearchTool**: Search the web using Brave Search API
+  - **GitHubTool**: Interact with GitHub repositories (read files, list PRs, etc.)
+  - **Base64Tool**: Encode/decode base64 strings
+  - **CalculatorTool**: Perform basic arithmetic operations
 
 ## Architecture
 
@@ -38,12 +43,32 @@ Abstract base class for all tools:
 - State persistence
 - Safe execution wrapper
 
+## Environment Variables
+
+Some tools require API keys to be set as environment variables:
+
+- **BRAVE_SEARCH_API_KEY**: Required for WebSearchTool
+  - Get your free API key at: https://api.search.brave.com/app/keys
+  - Free tier: 2,000 queries/month
+- **GITHUB_TOKEN**: Required for GitHubTool
+  - Create a personal access token at: https://github.com/settings/tokens
+- **OPENAI_API_KEY**: Required for ChatGPT agent integration
+  - Get your API key from: https://platform.openai.com/api-keys
+
+Set environment variables in your shell:
+```bash
+export BRAVE_SEARCH_API_KEY='your-api-key-here'
+export GITHUB_TOKEN='your-github-token-here'
+export OPENAI_API_KEY='your-openai-key-here'
+```
+
 ## Building
 
 ### Prerequisites
 - CMake 3.15 or higher
-- C++17 compatible compiler
+- C++20 compatible compiler
 - nlohmann/json library
+- libcurl (for HTTP requests)
 
 ### Build Instructions
 
@@ -57,8 +82,11 @@ cmake ..
 # Build
 cmake --build .
 
-# Run example
+# Run examples
 ./calculator_example
+./websearch_example
+./chatgpt_agent_test
+./base64_example
 ```
 
 ### Installing nlohmann/json
@@ -82,7 +110,64 @@ cmake ..
 sudo make install
 ```
 
-## Usage Example
+## Usage Examples
+
+### Using Built-in Tools
+
+#### WebSearch Tool
+
+```cpp
+#include "WebSearchTool.hpp"
+
+// Direct usage
+WebSearchTool search_tool;
+
+std::map<std::string, std::any> params = {
+    {"query", std::string("latest AI developments")},
+    {"count", 5}  // Optional: number of results (1-20, default 10)
+};
+
+ToolResult result = search_tool.execute(params);
+
+if (result.is_success()) {
+    json results = result.get_data_as<json>();
+    std::cout << "Query: " << results["query"] << std::endl;
+
+    for (const auto& item : results["results"]) {
+        std::cout << item["title"] << std::endl;
+        std::cout << item["url"] << std::endl;
+        std::cout << item["description"] << std::endl;
+    }
+}
+```
+
+#### Agent Integration with WebSearch
+
+```cpp
+#include "ChatGPTAgent.hpp"
+#include "ToolRegistry.hpp"
+#include "WebSearchTool.hpp"
+
+// Create agent and registry
+ChatGPTAgent agent(true);  // Verbose mode
+auto registry = std::make_shared<ToolRegistry>();
+
+// Register tools
+registry->register_tool<WebSearchTool>();
+agent.set_tool_registry(registry);
+
+// Agent will autonomously use web search when needed
+std::map<std::string, std::any> params = {
+    {"message", std::string("What are the latest developments in quantum computing?")},
+    {"system_prompt", std::string("You are a research assistant with web search.")},
+    {"model", std::string("gpt-4o-mini")}
+};
+
+auto result = agent.execute_safe(params);
+// Agent will automatically search the web and summarize findings
+```
+
+### Creating Custom Tools
 
 ```cpp
 #include "Tool.hpp"

@@ -2,7 +2,9 @@
 #include "../include/OllamaCompletionEngine.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/GitHubTool.hpp"
+#include "../include/WebSearchTool.hpp"
 #include "../include/Base64Tool.hpp"
+#include "../include/WebFetchTool.hpp"
 #include "./CalculatorTool.hpp"
 #include <iostream>
 #include <cassert>
@@ -264,7 +266,6 @@ void test_agent_with_tools() {
 void agent_call_agent(){
     auto registry = std::make_shared<ToolRegistry>();
 
-    // Register tools using template method - no make_shared needed!
     registry->register_tool<CalculatorTool>();
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
@@ -331,23 +332,35 @@ void test_ollama_to_chatgpt_conversation() {
     }
 
     try {
-        // Create Ollama agent
+        auto registry = std::make_shared<ToolRegistry>();
+
+        registry->register_tool<CalculatorTool>();
+        registry->register_tool<GitHubTool>();
+        registry->register_tool<Base64Tool>();
+        registry->register_tool<WebSearchTool>();
+        registry->register_tool<WebFetchTool>();
+            // Create Ollama agent
         auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
         ChatGPTAgent ollama_agent(ollama_engine, "llama3.1:8b", true);
+    
+        ollama_agent.set_tool_registry(registry);
+
 
         // Create ChatGPT agent
         ChatGPTAgent chatgpt_agent(true);
+        
+        chatgpt_agent.set_tool_registry(registry);
 
         std::cout << "Ollama (llama3.2) will debate with ChatGPT (gpt-3.5-turbo) about tabs vs spaces\n" << std::endl;
 
         std::map<std::string, std::any> ollama_params = {
             {"name", std::string("Ollama Agent")},
-            {"system_prompt", std::string("Youre fighting for equal rights for humans and robots. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete")}
+            {"system_prompt", std::string("Youre fighting for equal rights for humans and robots. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete. Provide sources for a better arguement using the websearch tool")}
         };
 
         std::map<std::string, std::any> chatgpt_params = {
             {"name", std::string("ChatGPT Agent")},
-            {"system_prompt", std::string("You are fighting to keep the status quo at all costs. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete")},
+            {"system_prompt", std::string("You are fighting to keep the status quo at all costs. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete. Provide sources for a better argument using the websearch tool")},
             {"model", std::string("gpt-4o-mini")}
         };
 
@@ -396,7 +409,7 @@ int main() {
         //agent_call_agent();
 
         // Ollama tests
-        test_ollama_agent();
+        //test_ollama_agent();
         test_ollama_to_chatgpt_conversation();
 
         std::cout << "\nTest suite finished successfully!" << std::endl;

@@ -22,6 +22,8 @@ add_library(tool_system STATIC
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
+    src/WebSearchTool.cpp
+    src/WebFetchTool.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -93,5 +95,14 @@ add_executable(ollama_test
 )
 
 target_link_libraries(ollama_test PRIVATE
+    tool_system
+)
+
+# WebSearch Example
+add_executable(websearch_example
+    examples/websearch_example.cpp
+)
+
+target_link_libraries(websearch_example PRIVATE
     tool_system
 )
