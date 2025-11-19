@@ -109,7 +109,7 @@ public:
      *
      * @example
      * auto calculator = registry->register_tool<CalculatorTool>();
-     * auto agent = registry->register_tool<ChatGPTAgent>(true); // verbose=true
+     * auto agent = registry->register_tool<Agent>(true); // verbose=true
      */
     template<typename T, typename... Args>
     std::shared_ptr<T> register_tool(Args&&... args) {

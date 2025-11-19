@@ -1,14 +1,17 @@
-#include "../include/ChatGPTAgent.hpp"
+#include "../include/Agent.hpp"
+#include "../include/OllamaCompletionEngine.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/GitHubTool.hpp"
+#include "../include/WebSearchTool.hpp"
 #include "../include/Base64Tool.hpp"
+#include "../include/WebFetchTool.hpp"
 #include "./CalculatorTool.hpp"
 #include <iostream>
 #include <cassert>
 #include <memory>
 
 /**
- * Test suite for ChatGPTAgent with focus on verbose mode functionality
+ * Test suite for Agent with focus on verbose mode functionality
  *
  * This demonstrates:
  * 1. Verbose mode enabled via constructor
@@ -23,7 +26,7 @@
 void test_verbose_constructor() {
 
     // Create agent with verbose=true
-    ChatGPTAgent agent(true);
+    Agent agent(true);
 
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -48,7 +51,7 @@ void test_verbose_constructor() {
 
 void test_system_prompt_with_verbose() {
 
-    ChatGPTAgent agent(true);  // Verbose on
+    Agent agent(true);  // Verbose on
 
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -90,8 +93,8 @@ void test_system_prompt_with_verbose() {
 }
 void test_multi_agent_system_prompt_with_verbose() {
 
-    ChatGPTAgent sales(true);  // Verbose on
-    ChatGPTAgent customer(true);  // Verbose on
+    Agent sales(true);  // Verbose on
+    Agent customer(true);  // Verbose on
 
     if (!sales.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
@@ -153,7 +156,7 @@ void test_agent_with_tools() {
     std::cout << "\n=== Test: Agent with Multiple Tools ===" << std::endl;
 
 
-    ChatGPTAgent agent(true);
+    Agent agent(true);
     if (!agent.has_api_key()) {
         std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
         return;
@@ -180,7 +183,7 @@ void test_agent_with_tools() {
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
 
-    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
+    auto cleanCodeAgent = registry->register_tool<Agent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
     cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
     cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
@@ -263,18 +266,17 @@ void test_agent_with_tools() {
 void agent_call_agent(){
     auto registry = std::make_shared<ToolRegistry>();
 
-    // Register tools using template method - no make_shared needed!
     registry->register_tool<CalculatorTool>();
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
 
-    auto cleanCodeAgent = registry->register_tool<ChatGPTAgent>(true);
+    auto cleanCodeAgent = registry->register_tool<Agent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
     cleanCodeAgent->set_description("agent in charge of making sure everything is up to clean code standards");
     cleanCodeAgent->add_message("system", "Make sure everything is according to there rules Clean code principles from Uncle Bob's Clean Code emphasize writing code primarily for human readability and maintainability. Use meaningful, pronounceable names for variables and functions that clearly reveal their intent and purpose while avoiding cryptic abbreviations. Keep functions small (ideally 5-20 lines) with each function doing one thing only, minimizing arguments to 0-2 when possible, and using descriptive names that indicate their action. Apply the Single Responsibility Principle where each class or module has one reason to change, maintain clear separation of concerns, and structure code hierarchically with high-level abstractions at the top and details below. Prefer self-documenting code over comments, using comments only to explain why rather than what, and always remove commented-out or obsolete code. Handle errors using exceptions rather than return codes, avoid returning null by using Optional or empty objects instead, and keep error handling separate from business logic. Follow the Boy Scout Rule by leaving code cleaner than you found it, refactor continuously, and always remember that code is read ten times more than it is written, so optimize for readability above all else.");
 
-    ChatGPTAgent agent(true);
-    
+    Agent agent(true);
+
     agent.set_tool_registry(registry);
 
     std::map<std::string, std::any> params = {
@@ -283,8 +285,93 @@ void agent_call_agent(){
         {"model", std::string("gpt-4o-mini")}
     };
 
- 
+
     auto result = agent.execute_safe(params);
+}
+
+void test_ollama_agent() {
+    std::cout << "\n=== Test: Ollama Agent ===" << std::endl;
+
+    try {
+        // Create Ollama engine
+        auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
+
+        // Create agent with Ollama engine
+        Agent ollama_agent(ollama_engine, "llama3.1:8b", true);
+
+        std::cout << "Testing Ollama agent with llama3.2 model\n" << std::endl;
+
+        std::map<std::string, std::any> params = {
+            {"message", std::string("Write a haiku about programming.")},
+            {"system_prompt", std::string("You are a poetic assistant.")}
+        };
+
+        auto result = ollama_agent.execute_safe(params);
+
+        if (result.is_success()) {
+            std::cout << "\n✓ Ollama agent test passed" << std::endl;
+        } else {
+            std::cout << "\n✗ Ollama agent test failed: " << result.get_message() << std::endl;
+        }
+
+    } catch (const std::exception& e) {
+        std::cout << "⚠️  SKIPPED: " << e.what() << std::endl;
+        std::cout << "Make sure Ollama is running: ollama serve" << std::endl;
+        std::cout << "And llama3.2 is installed: ollama pull llama3.2" << std::endl;
+    }
+}
+
+void test_ollama_to_chatgpt_conversation() {
+    std::cout << "\n=== Test: Ollama Agent talking to ChatGPT Agent ===" << std::endl;
+
+    // Check for API key
+    const char* api_key = std::getenv("OPENAI_API_KEY");
+    if (!api_key || std::string(api_key).empty()) {
+        std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
+        return;
+    }
+
+    try {
+        auto registry = std::make_shared<ToolRegistry>();
+
+        registry->register_tool<CalculatorTool>();
+        registry->register_tool<GitHubTool>();
+        registry->register_tool<Base64Tool>();
+        registry->register_tool<WebSearchTool>();
+        registry->register_tool<WebFetchTool>();
+            // Create Ollama agent
+        auto ollama_engine = std::make_shared<OllamaCompletionEngine>();
+        Agent ollama_agent(ollama_engine, "llama3.1:8b", true);
+    
+        ollama_agent.set_tool_registry(registry);
+
+
+        // Create ChatGPT agent
+        Agent chatgpt_agent(true);
+        
+        chatgpt_agent.set_tool_registry(registry);
+
+        std::cout << "Ollama (llama3.2) will debate with ChatGPT (gpt-3.5-turbo) about tabs vs spaces\n" << std::endl;
+
+        std::map<std::string, std::any> ollama_params = {
+            {"name", std::string("Ollama Agent")},
+            {"system_prompt", std::string("Youre fighting for equal rights for humans and robots. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete. Provide sources for a better arguement using the websearch tool")}
+        };
+
+        std::map<std::string, std::any> chatgpt_params = {
+            {"name", std::string("ChatGPT Agent")},
+            {"system_prompt", std::string("You are fighting to keep the status quo at all costs. When you think you have won the debate, say COMPLETE, if you think there is any ambiguity to who won, dont complete. Provide sources for a better argument using the websearch tool")},
+            {"model", std::string("gpt-4o-mini")}
+        };
+
+        ollama_agent.talk(chatgpt_agent, ollama_params, chatgpt_params);
+
+        std::cout << "\n✓ Cross-engine conversation test passed" << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cout << "⚠️  Error: " << e.what() << std::endl;
+        std::cout << "Make sure Ollama is running: ollama serve" << std::endl;
+    }
 }
 
 int main() {
@@ -293,7 +380,7 @@ int main() {
 ║           ChatGPT Agent Verbose Mode Test Suite            ║
 ║                                                            ║
 ║  This test suite demonstrates the verbose parameter        ║
-║  functionality for the ChatGPTAgent class.                 ║
+║  functionality for the Agent class.                 ║
 ║                                                            ║
 ║  Prerequisites:                                            ║
 ║  - OPENAI_API_KEY environment variable must be set         ║
@@ -316,10 +403,14 @@ int main() {
 
     // Run all tests
     try {
-        test_verbose_constructor();
-        test_system_prompt_with_verbose();
-        test_multi_agent_system_prompt_with_verbose();
-        agent_call_agent();
+        //test_verbose_constructor();
+        //test_system_prompt_with_verbose();
+        //test_multi_agent_system_prompt_with_verbose();
+        //agent_call_agent();
+
+        // Ollama tests
+        //test_ollama_agent();
+        test_ollama_to_chatgpt_conversation();
 
         std::cout << "\nTest suite finished successfully!" << std::endl;
 

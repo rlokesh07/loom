@@ -15,11 +15,15 @@ add_library(tool_system STATIC
     src/ToolResult.cpp
     src/Tool.cpp
     src/ChatGPTTool.cpp
-    src/ChatGPTAgent.cpp
+    src/Agent.cpp
+    src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
+    src/OllamaCompletionEngine.cpp
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
+    src/WebSearchTool.cpp
+    src/WebFetchTool.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -82,5 +86,23 @@ add_executable(base64_example
 )
 
 target_link_libraries(base64_example PRIVATE
+    tool_system
+)
+
+# Ollama Test
+add_executable(ollama_test
+    examples/ollama_test.cpp
+)
+
+target_link_libraries(ollama_test PRIVATE
+    tool_system
+)
+
+# WebSearch Example
+add_executable(websearch_example
+    examples/websearch_example.cpp
+)
+
+target_link_libraries(websearch_example PRIVATE
     tool_system
 )

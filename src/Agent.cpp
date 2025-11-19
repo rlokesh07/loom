@@ -1,13 +1,14 @@
-#include "../include/ChatGPTAgent.hpp"
+#include "../include/Agent.hpp"
 #include <any>
 #include <charconv>
 #include <iostream>
 #include <format>
-ChatGPTAgent::ChatGPTAgent(bool verbose)
-    : Tool("chatgpt_agent", "Agentic ChatGPT wrapper with conversation memory"),
+Agent::Agent(bool verbose)
+    : Tool("agent", "Agentic LLM wrapper with conversation memory"),
       engine_(std::make_shared<ChatGPTCompletionEngine>()),
       verbose_(verbose),
-      tool_registry_(nullptr) {
+      tool_registry_(nullptr),
+      default_model_("gpt-3.5-turbo") {
 
     // Define parameters - simpler than ChatGPTTool since we maintain history
     add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
@@ -36,11 +37,47 @@ ChatGPTAgent::ChatGPTAgent(bool verbose)
     add_parameter(verbose_param);
 }
 
-bool ChatGPTAgent::has_api_key() const {
-    return engine_->has_api_key();
+Agent::Agent(std::shared_ptr<CompletionEngine> engine,
+             const std::string& default_model,
+             bool verbose)
+    : Tool("agent", "Agentic LLM wrapper with conversation memory"),
+      engine_(engine),
+      verbose_(verbose),
+      tool_registry_(nullptr),
+      default_model_(default_model) {
+
+    // Define parameters
+    add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
+    add_parameter(Parameter("message", ParameterType::STRING,
+                           "User message to add to conversation", true));
+    Parameter model_param("model", ParameterType::STRING,
+                         "Model to use", false);
+    add_parameter(model_param);
+    Parameter temp_param("temperature", ParameterType::FLOAT,
+                        "Sampling temperature between 0 and 2", false);
+    add_parameter(temp_param);
+    Parameter max_tokens_param("max_tokens", ParameterType::INTEGER,
+                              "Maximum number of tokens to generate", false);
+    add_parameter(max_tokens_param);
+    Parameter system_prompt_param("system_prompt", ParameterType::STRING,
+                                 "System message (only used if conversation is empty)", false);
+    add_parameter(system_prompt_param);
+    Parameter verbose_param("verbose", ParameterType::BOOLEAN,
+                           "If true, print responses to cout", false);
+    add_parameter(verbose_param);
 }
 
-ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) {
+bool Agent::has_api_key() const {
+    // Try to cast to ChatGPTCompletionEngine to check for API key
+    auto chatgpt_engine = std::dynamic_pointer_cast<ChatGPTCompletionEngine>(engine_);
+    if (chatgpt_engine) {
+        return chatgpt_engine->has_api_key();
+    }
+    // For other engines (like Ollama), assume they're always ready
+    return true;
+}
+
+ToolResult Agent::execute(const std::map<std::string, std::any>& params) {
     // Check API key
     if (!has_api_key()) {
         return ToolResult::Error("OPENAI_API_KEY environment variable not set");
@@ -71,8 +108,8 @@ ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) 
         // Add user message to history
         conversation_history_.emplace_back("user", user_message);
 
-        // Extract model (default: gpt-3.5-turbo)
-        std::string model = "gpt-3.5-turbo";
+        // Extract model (use default model for this engine)
+        std::string model = default_model_;
         auto model_it = params.find("model");
         if (model_it != params.end()) {
             model = std::any_cast<std::string>(model_it->second);
@@ -103,7 +140,7 @@ ToolResult ChatGPTAgent::execute(const std::map<std::string, std::any>& params) 
 }
 
 
-void ChatGPTAgent::talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2){
+void Agent::talk(Agent& agent2, std::map<std::string, std::any>& params1, std::map<std::string, std::any>& params2){
     auto agent1Name_it = params1.find("name");
     auto agent2Name_it = params2.find("name");
 
@@ -162,27 +199,27 @@ void ChatGPTAgent::talk(ChatGPTAgent& agent2, std::map<std::string, std::any>& p
     }
 }
 
-ToolResult ChatGPTAgent::complete(const std::string& user_message,
+ToolResult Agent::complete(const std::string& user_message,
                                   const std::string& model,
                                   double temperature) {
     std::map<std::string, std::any> params = {
         {"message", user_message},
-        {"model", model},
+        {"model", model.empty() ? default_model_ : model},
         {"temperature", temperature}
     };
 
     return execute_safe(params);
 }
 
-void ChatGPTAgent::add_message(const std::string& role, const std::string& content) {
+void Agent::add_message(const std::string& role, const std::string& content) {
     conversation_history_.emplace_back(role, content);
 }
 
-void ChatGPTAgent::clear_history() {
+void Agent::clear_history() {
     conversation_history_.clear();
 }
 
-ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
+ToolResult Agent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
     try {
         // Prepare tools schema if available
         json tools_schema = json(nullptr);
@@ -190,7 +227,7 @@ ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double tempe
             tools_schema = tool_registry_->get_all_schemas();
         }
 
-        // Build request body with tools
+        // Build request body with tools (polymorphic call)
         json request_body = engine_->build_request_body(
             conversation_history_,
             model,
@@ -200,8 +237,8 @@ ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double tempe
             "auto"
         );
 
-        // Make API request
-        std::string response_str = engine_->make_api_request(request_body);
+        // Make API request (polymorphic call)
+        std::string response_str = engine_->make_request(request_body);
 
         // Parse response
         json full_response;
@@ -254,7 +291,7 @@ ToolResult ChatGPTAgent::execute_llm_call(const std::string& model, double tempe
     }
 }
 
-void ChatGPTAgent::process_tool_calls(const json& tool_calls) {
+void Agent::process_tool_calls(const json& tool_calls) {
     if (!has_tools()) {
         throw std::runtime_error("Tool calls requested but no tool registry available");
     }

@@ -85,7 +85,7 @@ ToolResult ChatGPTTool::execute(const std::map<std::string, std::any>& params) {
         );
 
         // Make API request
-        std::string response_str = engine_->make_api_request(request_body);
+        std::string response_str = engine_->make_request(request_body);
 
         // Parse response
         json full_response;
