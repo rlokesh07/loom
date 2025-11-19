@@ -12,8 +12,9 @@ This document outlines the plan to expose the Loom Agent system as a REST API fo
 
 - **HTTP Framework**: [cpp-httplib](https://github.com/yhirose/cpp-httplib) (header-only, lightweight)
 - **JSON**: nlohmann/json (already in project)
-- **Threading**: Thread pool for non-blocking request handling
 - **Session Storage**: In-memory with optional persistence
+
+> **Note**: Start with single-threaded implementation. Threading can be added later with minimal changes (see Phase 6).
 
 ### File Structure
 
@@ -44,19 +45,26 @@ loom/
 - Create new executable target for API server
 - Link existing loom library
 
-#### 1.2 SessionManager Class
+#### 1.2 AgentSessionManager Class
 ```cpp
-class SessionManager {
-    std::map<std::string, std::shared_ptr<Agent>> sessions_;
-    std::mutex mutex_;
+struct AgentSession {
+    std::string id;
+    std::shared_ptr<Agent> agent;
+    std::string engine_type;  // "chatgpt" or "ollama"
+    std::string model;
+    std::chrono::time_point<std::chrono::system_clock> created_at;
+};
+
+class AgentSessionManager {
+    std::map<std::string, AgentSession> sessions_;
 
 public:
     std::string create_session(const std::string& engine_type,
                                const std::string& model,
                                bool verbose);
-    std::shared_ptr<Agent> get_session(const std::string& id);
+    AgentSession* get_session(const std::string& id);
     bool destroy_session(const std::string& id);
-    std::vector<std::string> list_sessions();
+    std::vector<AgentSession> list_sessions();
 };
 ```
 
@@ -64,7 +72,7 @@ public:
 ```cpp
 class ApiServer {
     httplib::Server server_;
-    SessionManager session_manager_;
+    AgentSessionManager session_manager_;
     ConversationManager conversation_manager_;
 
 public:
@@ -242,21 +250,19 @@ class ConversationManager {
         std::string agent2_id;
         std::string status;  // "running", "completed", "error"
         std::vector<ConversationMessage> messages;
-        std::thread worker_thread;
     };
 
     std::map<std::string, Conversation> conversations_;
-    std::mutex mutex_;
 
 public:
-    std::string start_conversation(
+    // Runs conversation synchronously (blocking)
+    std::string run_conversation(
         std::shared_ptr<Agent> agent1,
         std::shared_ptr<Agent> agent2,
         const json& agent1_config,
         const json& agent2_config
     );
-    json get_conversation_status(const std::string& id);
-    void stop_conversation(const std::string& id);
+    json get_conversation(const std::string& id);
 };
 ```
 
@@ -264,11 +270,11 @@ public:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/conversations` | POST | Start multi-agent conversation |
-| `/api/conversations` | GET | List all conversations |
-| `/api/conversations/{id}` | GET | Get conversation status/messages |
-| `/api/conversations/{id}` | DELETE | Stop conversation |
-| `/api/conversations/{id}/stream` | GET | SSE stream of messages |
+| `/api/conversations` | POST | Run multi-agent conversation (blocking) |
+| `/api/conversations` | GET | List all completed conversations |
+| `/api/conversations/{id}` | GET | Get conversation messages |
+
+> **Note**: In single-threaded mode, POST `/api/conversations` blocks until conversation completes. Streaming and async execution added in Phase 6.
 
 **POST /api/conversations**
 ```json
@@ -287,12 +293,14 @@ public:
   "max_turns": 20  // optional, default 100
 }
 
-// Response
+// Response (returns after conversation completes)
 {
   "conversation_id": "conv-789",
-  "status": "running",
+  "status": "completed",
+  "turns": 8,
   "agent1": "Ollama Agent",
-  "agent2": "ChatGPT Agent"
+  "agent2": "ChatGPT Agent",
+  "messages": [...]
 }
 ```
 
@@ -321,34 +329,11 @@ public:
 }
 ```
 
-**GET /api/conversations/{id}/stream (Server-Sent Events)**
-```
-event: message
-data: {"turn": 1, "agent": "Ollama Agent", "content": "I believe..."}
-
-event: message
-data: {"turn": 2, "agent": "ChatGPT Agent", "content": "The status quo..."}
-
-event: tool_call
-data: {"turn": 3, "agent": "Ollama Agent", "tool": "WebSearchTool", "query": "robot rights"}
-
-event: complete
-data: {"conversation_id": "conv-789", "total_turns": 8}
-```
-
 ---
 
 ### Phase 5: Advanced Features
 
-#### 5.1 Streaming Chat Responses
-```
-GET /api/sessions/{id}/chat/stream
-Accept: text/event-stream
-```
-
-Stream tool call progress and partial responses for long-running requests.
-
-#### 5.2 Session Persistence
+#### 5.1 Session Persistence
 ```json
 POST /api/sessions/{id}/save
 // Saves session to disk
@@ -357,11 +342,51 @@ POST /api/sessions/{id}/load
 // Loads session from disk
 ```
 
-#### 5.3 Health & Metrics
+#### 5.2 Health & Metrics
 ```
 GET /api/health
 GET /api/metrics
 ```
+
+---
+
+### Phase 6: Threading & Concurrency (Future)
+
+When you need to handle multiple concurrent requests:
+
+#### 6.1 Enable Thread Pool
+```cpp
+// Single line change to enable threading
+httplib::Server server;
+server.new_task_queue = [] {
+    return new httplib::ThreadPool(8);  // 8 worker threads
+};
+```
+
+#### 6.2 Add Mutex Protection
+Add `std::mutex` to SessionManager and ConversationManager to protect shared state:
+```cpp
+class SessionManager {
+    std::map<std::string, std::shared_ptr<Agent>> sessions_;
+    std::mutex mutex_;  // Add this
+
+public:
+    std::string create_session(...) {
+        std::lock_guard<std::mutex> lock(mutex_);  // Lock before access
+        // ... existing code
+    }
+};
+```
+
+#### 6.3 Async Conversations
+Convert `run_conversation` to async with background threads:
+- POST `/api/conversations` returns immediately with conversation ID
+- Conversation runs in background thread
+- Client polls GET `/api/conversations/{id}` for status
+- Add SSE streaming endpoint `/api/conversations/{id}/stream`
+
+#### 6.4 Per-Agent Mutex
+Add mutex to Agent class to protect conversation history during concurrent access.
 
 ---
 
@@ -487,15 +512,10 @@ async function runDebate() {
 
 ## Technical Considerations
 
-### Thread Safety
-- Mutex protection for session and conversation maps
-- Each conversation runs in its own thread
-- Agent access must be synchronized
-
 ### Timeout Handling
 - LLM calls can take 10-30 seconds
-- Configurable request timeouts
-- Async handling to prevent blocking
+- Set appropriate request timeouts in cpp-httplib
+- Consider client-side timeout handling
 
 ### Error Handling
 ```json
@@ -526,9 +546,9 @@ server.set_default_headers({
 ```
 
 ### Memory Management
-- Session timeout/cleanup for inactive sessions (configurable TTL)
-- Limit max concurrent sessions
-- Limit conversation history size
+- Manual session cleanup (call DELETE when done)
+- Consider adding session TTL cleanup in Phase 6
+- Limit conversation history size if needed
 
 ---
 

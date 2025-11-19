@@ -106,3 +106,33 @@ add_executable(websearch_example
 target_link_libraries(websearch_example PRIVATE
     tool_system
 )
+
+# API Server
+include(FetchContent)
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.15.3
+)
+FetchContent_MakeAvailable(httplib)
+
+add_executable(loom_api
+    src/api_main.cpp
+    src/AgentSessionManager.cpp
+    src/ApiServer.cpp
+)
+
+target_link_libraries(loom_api PRIVATE
+    tool_system
+    httplib::httplib
+)
+
+# API Test
+add_executable(api_test
+    examples/api_test.cpp
+)
+
+target_link_libraries(api_test PRIVATE
+    nlohmann_json::nlohmann_json
+    ${CURL_LIBRARIES}
+)
