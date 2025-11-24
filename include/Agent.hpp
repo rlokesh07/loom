@@ -10,6 +10,10 @@
 #include <vector>
 #include <memory>
 
+// Forward declarations to avoid circular dependency
+class AgentSessionManager;
+struct AgentSession;
+
 /**
  * @brief Agentic wrapper for LLM completion engines
  *
@@ -19,6 +23,14 @@
  * - Has memory across multiple execute() calls
  * - Supports any CompletionEngine (ChatGPT, Ollama, etc.)
  */
+// Struct to track tool calls made during execution
+struct ToolCallInfo {
+    std::string tool_name;
+    std::string arguments;
+    std::string result;
+    bool success;
+};
+
 class Agent : public Tool {
 private:
     std::shared_ptr<CompletionEngine> engine_;
@@ -26,38 +38,19 @@ private:
     bool verbose_;
     ToolRegistryPtr tool_registry_;
     std::string default_model_;  // Default model to use
+    std::string sessionID_;
+    AgentSessionManager* session_manager_;
+    std::vector<ToolCallInfo> last_tool_calls_;  // Track tool calls from last execution
 
 public:
-    /**
-     * @brief Construct a new Agent with ChatGPT engine (default)
-     *
-     * Automatically loads API key from OPENAI_API_KEY environment variable
-     * @param verbose If true, all responses will be printed to cout
-     */
-    Agent(bool verbose = false);
+   Agent(bool verbose = false);
 
-    /**
-     * @brief Construct with custom completion engine
-     *
-     * @param engine Shared pointer to any CompletionEngine implementation
-     * @param default_model Default model name to use
-     * @param verbose If true, all responses will be printed to cout
-     */
+    // agent defaults to gpt 3.5 model if not specified
     Agent(std::shared_ptr<CompletionEngine> engine,
           const std::string& default_model = "gpt-3.5-turbo",
           bool verbose = false);
 
-    /**
-     * @brief Execute chat completion with conversation history
-     *
-     * Parameters:
-     * - name (string): Name of the agent
-     * - message (string): User message to add to conversation
-     * - model (string, optional): Model to use (default: "gpt-3.5-turbo")
-     * - temperature (number, optional): Sampling temperature 0-2 (default: 0.7)
-     * - max_tokens (integer, optional): Maximum tokens to generate
-     * - system_prompt (string, optional): System message (only used if conversation is empty)
-     */
+    // execute the model with the parameters
     ToolResult execute(const std::map<std::string, std::any>& params) override;
 
 
@@ -66,7 +59,7 @@ public:
     //returns the completion engine
     std::shared_ptr<CompletionEngine> get_engine() const { return engine_; }
 
-    // helper function for more simple requests
+    // simple completion 
     ToolResult complete(const std::string& user_message,
                        const std::string& model = "",
                        double temperature = 0.7);
@@ -74,11 +67,14 @@ public:
     //add message to history
     void add_message(const std::string& role, const std::string& content);
 
+    void set_session_id(std::string sessionID);
+
+    void set_agent_session_manager(AgentSessionManager* sessionManager);
+
     const std::vector<ChatMessage>& get_history() const { return conversation_history_; }
 
     void clear_history();
 
-    // set the output to verbose
     void set_verbose(bool verbose) { verbose_ = verbose; }
 
     bool is_verbose() const { return verbose_; }
@@ -90,23 +86,15 @@ public:
     ToolRegistryPtr get_tool_registry() const { return tool_registry_; }
     bool has_tools() const { return tool_registry_ != nullptr; }
 
-private:
-    /**
-     * @brief Execute a single LLM call with tool support
-     *
-     * @param model Model to use
-     * @param temperature Sampling temperature
-     * @param max_tokens Max tokens to generate
-     * @return ToolResult containing the response
-     */
-    ToolResult execute_llm_call(const std::string& model, double temperature, int max_tokens);
+    // Get tool calls from last execution
+    const std::vector<ToolCallInfo>& get_last_tool_calls() const { return last_tool_calls_; }
 
-    /**
-     * @brief Process tool calls from LLM response
-     *
-     * @param tool_calls JSON array of tool calls from the LLM
-     */
-    void process_tool_calls(const json& tool_calls);
+private:
+    // basic llm call
+    ToolResult execute_llm_call(const std::string& model, double temperature, int max_tokens);
+    
+    // process the tool calls from the llm
+   void process_tool_calls(const json& tool_calls);
 };
 
 #endif // AGENT_HPP

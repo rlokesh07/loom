@@ -13,13 +13,14 @@ struct AgentSession {
     std::shared_ptr<Agent> agent;
     std::string engine_type;  // "chatgpt" or "ollama"
     std::string model;
+    std::map<std::string, std::string> child_sessions;
     std::chrono::time_point<std::chrono::system_clock> created_at;
 };
 
 class AgentSessionManager {
 private:
     std::map<std::string, AgentSession> sessions_;
-
+    
     std::string generate_session_id();
 
 public:

@@ -1,6 +1,7 @@
 #include "../include/ToolRegistry.hpp"
 #include <stdexcept>
 #include <algorithm>
+#include <iostream>
 
 void ToolRegistry::register_tool(ToolPtr tool) {
     if (!tool) {
@@ -60,9 +61,24 @@ ToolResult ToolRegistry::execute_tool(const std::string& name, const json& param
         return ToolResult::Error("Tool '" + name + "' not found in registry");
     }
 
+    // Debug output for tool calls
+    std::cout << "[TOOL CALL] " << name << std::endl;
+    std::cout << "  Parameters: " << params.dump() << std::endl;
+
     try {
-        return tool->execute_from_json(params);
+        auto result = tool->execute_from_json(params);
+        std::cout << "  Result: " << (result.is_success() ? "SUCCESS" : "ERROR") << std::endl;
+        if (!result.get_message().empty()) {
+            // Truncate long messages for readability
+            std::string msg = result.get_message();
+            if (msg.length() > 200) {
+                msg = msg.substr(0, 200) + "...";
+            }
+            std::cout << "  Message: " << msg << std::endl;
+        }
+        return result;
     } catch (const std::exception& e) {
+        std::cout << "  Result: EXCEPTION - " << e.what() << std::endl;
         return ToolResult::Error("Error executing tool '" + name + "': " + e.what());
     }
 }
