@@ -16,6 +16,7 @@ add_library(tool_system STATIC
     src/Tool.cpp
     src/ChatGPTTool.cpp
     src/Agent.cpp
+    src/AgentSessionManager.cpp
     src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
     src/OllamaCompletionEngine.cpp
@@ -24,6 +25,7 @@ add_library(tool_system STATIC
     src/Base64Tool.cpp
     src/WebSearchTool.cpp
     src/WebFetchTool.cpp
+    src/GDriveTool.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -118,8 +120,9 @@ FetchContent_MakeAvailable(httplib)
 
 add_executable(loom_api
     src/api_main.cpp
-    src/AgentSessionManager.cpp
     src/ApiServer.cpp
+    src/AvailableToolsRegistry.cpp
+    examples/CalculatorTool.cpp
 )
 
 target_link_libraries(loom_api PRIVATE

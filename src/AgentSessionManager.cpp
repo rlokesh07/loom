@@ -1,6 +1,7 @@
-#include "AgentSessionManager.hpp"
-#include "ChatGPTCompletionEngine.hpp"
-#include "OllamaCompletionEngine.hpp"
+#include "../include/AgentSessionManager.hpp"
+#include "../include/ChatGPTCompletionEngine.hpp"
+#include "../include/OllamaCompletionEngine.hpp"
+#include "../include/ToolRegistry.hpp"
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -36,8 +37,15 @@ std::string AgentSessionManager::create_session(const std::string& engine_type,
                                     ". Must be 'chatgpt' or 'ollama'");
     }
 
+    // Initialize empty tool registry for the agent
+    auto registry = std::make_shared<ToolRegistry>();
+    agent->set_tool_registry(registry);
+
     AgentSession session;
     session.id = generate_session_id();
+    agent->set_session_id(session.id);
+    agent->set_agent_session_manager(this);
+
     session.agent = agent;
     session.engine_type = engine_type;
     session.model = model;
@@ -57,7 +65,19 @@ AgentSession* AgentSessionManager::get_session(const std::string& id) {
 }
 
 bool AgentSessionManager::destroy_session(const std::string& id) {
-    return sessions_.erase(id) > 0;
+    auto it = sessions_.find(id);
+    if (it == sessions_.end()) {
+        return false;
+    }
+
+    // Recursively destroy all child sessions first
+    for (const auto& [tool_name, child_id] : it->second.child_sessions) {
+        destroy_session(child_id);
+    }
+
+    // Now destroy this session
+    sessions_.erase(it);
+    return true;
 }
 
 std::vector<AgentSession> AgentSessionManager::list_sessions() const {

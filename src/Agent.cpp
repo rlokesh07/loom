@@ -1,8 +1,10 @@
 #include "../include/Agent.hpp"
+#include "../include/AgentSessionManager.hpp"
 #include <any>
 #include <charconv>
 #include <iostream>
 #include <format>
+#include <memory>
 Agent::Agent(bool verbose)
     : Tool("agent", "Agentic LLM wrapper with conversation memory"),
       engine_(std::make_shared<ChatGPTCompletionEngine>()),
@@ -45,8 +47,9 @@ Agent::Agent(std::shared_ptr<CompletionEngine> engine,
       verbose_(verbose),
       tool_registry_(nullptr),
       default_model_(default_model) {
+    
 
-    // Define parameters
+    // add name, message, temp, tokens, system prompt, and verbose parameters
     add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
     add_parameter(Parameter("message", ParameterType::STRING,
                            "User message to add to conversation", true));
@@ -73,14 +76,17 @@ bool Agent::has_api_key() const {
     if (chatgpt_engine) {
         return chatgpt_engine->has_api_key();
     }
-    // For other engines (like Ollama), assume they're always ready
+    // For other engines assume they're always ready
     return true;
 }
 
 ToolResult Agent::execute(const std::map<std::string, std::any>& params) {
+    // Clear tool calls from previous execution
+    last_tool_calls_.clear();
+
     // Check API key
     if (!has_api_key()) {
-        return ToolResult::Error("OPENAI_API_KEY environment variable not set");
+        return ToolResult::Error("environment variables not set");
     }
 
     try {
@@ -219,17 +225,55 @@ void Agent::clear_history() {
     conversation_history_.clear();
 }
 
+void Agent::set_session_id(std::string sessionID) {
+    sessionID_ = sessionID;
+}
+
+void Agent::set_agent_session_manager(AgentSessionManager* sessionManager) {
+    session_manager_ = sessionManager;
+}
+
 ToolResult Agent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
     try {
-        // Prepare tools schema if available
+        // Prepare tools schema
         json tools_schema = json(nullptr);
+        std::string tools_system_prompt;
+
         if (has_tools() && tool_registry_->size() > 0) {
             tools_schema = tool_registry_->get_all_schemas();
+
+            // Build a system prompt describing available tools for models that don't support function calling
+            tools_system_prompt = "\n\nYou have the following tools available. To call a tool, respond with ONLY a JSON object in this exact format:\n{\"name\": \"tool_name\", \"parameters\": {\"param1\": \"value1\"}}\n\nAvailable tools:\n";
+            for (const auto& tool : tools_schema) {
+                tools_system_prompt += "- " + tool["function"]["name"].get<std::string>() + ": ";
+                tools_system_prompt += tool["function"]["description"].get<std::string>() + "\n";
+                tools_system_prompt += "  Parameters: " + tool["function"]["parameters"].dump() + "\n";
+            }
+            tools_system_prompt += "\nOnly use the tools listed above. Do not make up tool names.";
         }
 
-        // Build request body with tools (polymorphic call)
+        // Inject tools into system prompt if we have tools
+        std::vector<ChatMessage> messages_with_tools = conversation_history_;
+        if (!tools_system_prompt.empty()) {
+            // Find existing system message and append, or add new one
+            bool found_system = false;
+            for (auto& msg : messages_with_tools) {
+                if (msg.role == "system") {
+                    msg.content += tools_system_prompt;
+                    found_system = true;
+                    break;
+                }
+            }
+            if (!found_system && !messages_with_tools.empty()) {
+                // Insert system message at the beginning
+                messages_with_tools.insert(messages_with_tools.begin(),
+                    ChatMessage("system", "You are a helpful assistant." + tools_system_prompt));
+            }
+        }
+
+        // Build request body with tools
         json request_body = engine_->build_request_body(
-            conversation_history_,
+            messages_with_tools,
             model,
             temperature,
             max_tokens,
@@ -237,7 +281,6 @@ ToolResult Agent::execute_llm_call(const std::string& model, double temperature,
             "auto"
         );
 
-        // Make API request (polymorphic call)
         std::string response_str = engine_->make_request(request_body);
 
         // Parse response
@@ -275,6 +318,54 @@ ToolResult Agent::execute_llm_call(const std::string& model, double temperature,
             }
         }
 
+        // Fallback: Check if the model output a tool call as plain text JSON
+        // This handles models that don't support function calling properly
+        if (has_tools() && !completion.empty()) {
+            try {
+                // Try to parse the completion as JSON
+                json text_tool_call = json::parse(completion);
+
+                // Check if it looks like a tool call (has "name" and "parameters")
+                if (text_tool_call.contains("name") && text_tool_call.contains("parameters")) {
+                    std::string tool_name = text_tool_call["name"].get<std::string>();
+
+                    // Verify the tool actually exists
+                    if (tool_registry_->has_tool(tool_name)) {
+                        if (verbose_) {
+                            std::cout << "\nAssistant is calling tool (text fallback)..." << std::endl;
+                            std::cout << "  → Tool: " << tool_name << std::endl;
+                            std::cout << "    Arguments: " << text_tool_call["parameters"].dump() << std::endl;
+                            std::cout << std::endl;
+                        }
+
+                        // Convert to the format process_tool_calls expects
+                        json fake_tool_calls = json::array();
+                        fake_tool_calls.push_back({
+                            {"id", "text_call_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count())},
+                            {"type", "function"},
+                            {"function", {
+                                {"name", tool_name},
+                                {"arguments", text_tool_call["parameters"].dump()}
+                            }}
+                        });
+
+                        // Add assistant message with tool calls to history
+                        ChatMessage assistant_msg("assistant", "");
+                        assistant_msg.tool_calls = fake_tool_calls;
+                        conversation_history_.push_back(assistant_msg);
+
+                        // Process the tool call
+                        process_tool_calls(fake_tool_calls);
+
+                        // Make another LLM call with tool results
+                        return execute_llm_call(model, temperature, max_tokens);
+                    }
+                }
+            } catch (const json::exception&) {
+                // Not valid JSON, continue as normal text response
+            }
+        }
+
         // No tool calls - add regular assistant response to history
         conversation_history_.emplace_back("assistant", completion);
 
@@ -301,27 +392,87 @@ void Agent::process_tool_calls(const json& tool_calls) {
         std::string tool_name = tool_call["function"]["name"].get<std::string>();
         json tool_args = json::parse(tool_call["function"]["arguments"].get<std::string>());
 
+        // Always print tool calls to stdout for visibility
+        std::cout << "[TOOL CALL] " << tool_name << std::endl;
+        std::cout << "  Arguments: " << tool_args.dump() << std::endl;
+
         if (verbose_) {
             std::cout << "Executing: " << tool_name << "(" << tool_args.dump() << ")" << std::endl;
         }
+        
+        std::shared_ptr<Tool> tool = tool_registry_->get_tool(tool_name);
+        std::shared_ptr<Agent> agent_tool = std::dynamic_pointer_cast<Agent>(tool);
 
-        // Execute the tool
-        ToolResult result = tool_registry_->execute_tool(tool_name, tool_args);
+        ToolResult result = ToolResult::Success({}, "");
+
+        if (agent_tool != nullptr && session_manager_ != nullptr) {
+            // This is an agent tool - use isolated child session
+            AgentSession* currSession = session_manager_->get_session(sessionID_);
+            std::string child_session_id;
+
+            // Check if child session already exists for this tool
+            auto it = currSession->child_sessions.find(tool_name);
+            if (it == currSession->child_sessions.end()) {
+                // Create new child session with same engine/model as parent
+                child_session_id = session_manager_->create_session(
+                    currSession->engine_type,
+                    currSession->model,
+                    verbose_
+                );
+                currSession->child_sessions[tool_name] = child_session_id;
+            } else {
+                child_session_id = it->second;
+            }
+
+            // Execute through child session's agent
+            AgentSession* childSession = session_manager_->get_session(child_session_id);
+
+            // Convert json tool_args to map for execute
+            // Handle special parameters that Agent expects with specific types
+            // Skip model/temperature/max_tokens/verbose - let child use its own defaults
+            std::map<std::string, std::any> params_map;
+            for (auto& [key, value] : tool_args.items()) {
+                // Skip parameters that should use child's defaults
+                if (key == "model" || key == "temperature" || key == "max_tokens" || key == "verbose") {
+                    continue;
+                } else if (value.is_string()) {
+                    params_map[key] = value.get<std::string>();
+                } else if (value.is_number_integer()) {
+                    params_map[key] = value.get<int>();
+                } else if (value.is_number_float()) {
+                    params_map[key] = value.get<double>();
+                } else if (value.is_boolean()) {
+                    params_map[key] = value.get<bool>();
+                } else {
+                    params_map[key] = value.dump();
+                }
+            }
+
+            result = childSession->agent->execute_safe(params_map);
+        } else {
+            // Normal tool execution
+            result = tool_registry_->execute_tool(tool_name, tool_args);
+        }
 
         // Prepare tool response message
         std::string tool_response;
-        if (result.is_success()) {
+        bool tool_success = result.is_success();
+        if (tool_success) {
             tool_response = result.get_message();
-            if (verbose_) {
-                std::cout << "  ✓ Result: " << tool_response << std::endl;
-            }
+            std::cout << "  ✓ Result: " << tool_response << std::endl;
         } else {
             auto error = result.get_error();
             tool_response = "Error: " + (error.has_value() ? *error : "Unknown error");
-            if (verbose_) {
-                std::cout << "  ✗ Error: " << tool_response << std::endl;
-            }
+            std::cout << "  ✗ Error: " << tool_response << std::endl;
         }
+
+        // Record tool call for later retrieval
+        last_tool_calls_.push_back({
+            tool_name,
+            tool_args.dump(),
+            tool_response,
+            tool_success
+        });
 
         // Add tool response to conversation history
         ChatMessage tool_msg("tool", tool_response);
