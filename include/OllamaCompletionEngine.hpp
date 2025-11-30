@@ -2,6 +2,7 @@
 #define OLLAMA_COMPLETION_ENGINE_HPP
 
 #include "CompletionEngine.hpp"
+#include "ToolRegistry.hpp"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -53,8 +54,8 @@ public:
                            const std::string& model = "llama3.2",
                            double temperature = 0.7,
                            int max_tokens = -1,
-                           const json& tools = json(nullptr),
-                           const std::string& tool_choice = "auto") const;
+                           ToolRegistryPtr registryPtr = nullptr,
+                           const std::string& tool_choice = "auto") const override;
 
 private:
     std::string base_url_;

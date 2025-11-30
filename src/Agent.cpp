@@ -51,20 +51,32 @@ Agent::Agent(std::shared_ptr<CompletionEngine> engine,
 
     // add name, message, temp, tokens, system prompt, and verbose parameters
     add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
+
+    
     add_parameter(Parameter("message", ParameterType::STRING,
                            "User message to add to conversation", true));
+
+
     Parameter model_param("model", ParameterType::STRING,
                          "Model to use", false);
     add_parameter(model_param);
+
+
     Parameter temp_param("temperature", ParameterType::FLOAT,
                         "Sampling temperature between 0 and 2", false);
     add_parameter(temp_param);
+    
+
     Parameter max_tokens_param("max_tokens", ParameterType::INTEGER,
                               "Maximum number of tokens to generate", false);
     add_parameter(max_tokens_param);
+
+
     Parameter system_prompt_param("system_prompt", ParameterType::STRING,
                                  "System message (only used if conversation is empty)", false);
     add_parameter(system_prompt_param);
+
+
     Parameter verbose_param("verbose", ParameterType::BOOLEAN,
                            "If true, print responses to cout", false);
     add_parameter(verbose_param);
@@ -241,8 +253,8 @@ ToolResult Agent::execute_llm_call(const std::string& model, double temperature,
 
         if (has_tools() && tool_registry_->size() > 0) {
             tools_schema = tool_registry_->get_all_schemas();
-
-            // Build a system prompt describing available tools for models that don't support function calling
+            
+            // build a prompt to get models without tool calling working BETA
             tools_system_prompt = "\n\nYou have the following tools available. To call a tool, respond with ONLY a JSON object in this exact format:\n{\"name\": \"tool_name\", \"parameters\": {\"param1\": \"value1\"}}\n\nAvailable tools:\n";
             for (const auto& tool : tools_schema) {
                 tools_system_prompt += "- " + tool["function"]["name"].get<std::string>() + ": ";
@@ -277,7 +289,7 @@ ToolResult Agent::execute_llm_call(const std::string& model, double temperature,
             model,
             temperature,
             max_tokens,
-            tools_schema,
+            tool_registry_,
             "auto"
         );
 

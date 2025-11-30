@@ -68,7 +68,7 @@ json ChatGPTCompletionEngine::build_request_body(const std::vector<ChatMessage>&
                                                  const std::string& model,
                                                  double temperature,
                                                  int max_tokens,
-                                                 const json& tools,
+                                                 ToolRegistryPtr registryPtr,
                                                  const std::string& tool_choice) const {
     json request_body;
 
@@ -90,9 +90,10 @@ json ChatGPTCompletionEngine::build_request_body(const std::vector<ChatMessage>&
         request_body["max_tokens"] = max_tokens;
     }
 
-    // Add tools if provided
-    if (!tools.is_null() && !tools.empty()) {
-        request_body["tools"] = tools;
+    // Add tools if registry is provided and has tools
+    if (registryPtr != nullptr && registryPtr->size() > 0) {
+        json tools_schema = registryPtr->get_all_schemas();
+        request_body["tools"] = tools_schema;
         request_body["tool_choice"] = tool_choice;
     }
 

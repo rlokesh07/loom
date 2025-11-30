@@ -2,6 +2,7 @@
 #define CHATGPT_COMPLETION_ENGINE_HPP
 
 #include "CompletionEngine.hpp"
+#include "ToolRegistry.hpp"
 #include <string>
 #include <vector>
 #include <any>
@@ -62,8 +63,9 @@ public:
                            const std::string& model = "gpt-3.5-turbo",
                            double temperature = 0.7,
                            int max_tokens = -1,
-                           const json& tools = json(nullptr),
+                           ToolRegistryPtr registryPtr = nullptr,
                            const std::string& tool_choice = "auto") const override;
+
 };
 
 #endif // CHATGPT_COMPLETION_ENGINE_HPP

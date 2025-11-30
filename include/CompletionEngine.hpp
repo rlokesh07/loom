@@ -1,6 +1,7 @@
 #ifndef COMPLETION_ENGINE_HPP
 #define COMPLETION_ENGINE_HPP
 
+#include "ToolRegistry.hpp"
 #include <string>
 #include <vector>
 #include <any>
@@ -44,56 +45,24 @@ struct ChatMessage {
     }
 };
 
-/**
- * @brief Abstract base class for LLM completion engines
- *
- * This class provides a common interface for different LLM API providers
- * (OpenAI, Ollama, etc.). It encapsulates shared logic for message handling
- * and response parsing.
- */
+// base class for the llm modelds
 class CompletionEngine {
 public:
-    /**
-     * @brief Virtual destructor for proper cleanup of derived classes
-     */
     virtual ~CompletionEngine() = default;
-
-    /**
-     * @brief Extract messages from a std::any parameter
-     *
-     * @param messages_param Messages in std::any format (typically json)
-     * @return Vector of ChatMessage objects
-     */
+    
+    // extract messages from a std::any parameter
     std::vector<ChatMessage> extract_messages(const std::any& messages_param) const;
 
-    /**
-     * @brief Make HTTP POST request to the LLM API
-     *
-     * Pure virtual function - must be implemented by derived classes
-     *
-     * @param request_body JSON request body for the API
-     * @return Response string from the API
-     */
+    // setting up the basic make request function that all engines need 
     virtual std::string make_request(const json& request_body) = 0;
 
-    /**
-     * @brief Build a request body for the API
-     *
-     * Pure virtual function - must be implemented by derived classes
-     *
-     * @param messages Vector of chat messages
-     * @param model Model to use
-     * @param temperature Sampling temperature (0.0 to 2.0)
-     * @param max_tokens Maximum tokens to generate (optional, -1 for no limit)
-     * @param tools JSON array of tool schemas (optional, for function calling)
-     * @param tool_choice Tool choice strategy (optional, "auto", "none", or specific tool)
-     * @return JSON request body ready for API call
-     */
+
+    // each models way of creating the request body
     virtual json build_request_body(const std::vector<ChatMessage>& messages,
                                    const std::string& model,
                                    double temperature = 0.7,
                                    int max_tokens = -1,
-                                   const json& tools = json(nullptr),
+                                   ToolRegistryPtr registryPtr = nullptr,
                                    const std::string& tool_choice = "auto") const = 0;
 
     /**
