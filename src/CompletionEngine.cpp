@@ -2,6 +2,8 @@
 #include <curl/curl.h>
 #include <cstdlib>
 #include <stdexcept>
+#include <algorithm>
+#include <iostream>
 
 // Callback function for libcurl to write response data
 static size_t write_callback(void* contents, size_t size, size_t nmemb, std::string* userp) {
@@ -9,6 +11,31 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, std::str
     userp->append(static_cast<char*>(contents), total_size);
     return total_size;
 }
+
+// Model context window limits (in tokens)
+const std::map<std::string, int> CompletionEngine::MODEL_CONTEXT_LIMITS = {
+    // OpenAI models
+    {"gpt-3.5-turbo", 4096},
+    {"gpt-3.5-turbo-16k", 16384},
+    {"gpt-4", 8192},
+    {"gpt-4-32k", 32768},
+    {"gpt-4-turbo", 128000},
+    {"gpt-4-turbo-preview", 128000},
+    {"gpt-4o", 128000},
+    {"gpt-4o-mini", 128000},
+
+    // Ollama/Open source models
+    {"llama2", 4096},
+    {"llama3", 8192},
+    {"llama3.1", 128000},
+    {"llama3.2", 8192},
+    {"mistral", 8192},
+    {"mixtral", 32768},
+    {"codellama", 16384},
+
+    // Default fallback
+    {"default", 4096}
+};
 
 std::vector<ChatMessage> CompletionEngine::extract_messages(const std::any& messages_param) const {
     std::vector<ChatMessage> messages;
@@ -64,4 +91,106 @@ std::string CompletionEngine::parse_completion_response(const std::string& respo
     }
 
     throw std::runtime_error("No completion in response");
+}
+
+std::vector<ChatMessage> CompletionEngine::truncate_messages(
+    const std::vector<ChatMessage>& messages,
+    const std::string& model,
+    int max_completion_tokens) {
+
+    // Get model's context window limit
+    int context_limit = 4096; // Default
+    auto it = MODEL_CONTEXT_LIMITS.find(model);
+    if (it != MODEL_CONTEXT_LIMITS.end()) {
+        context_limit = it->second;
+    } else {
+        // Try partial match for model variants (e.g., "gpt-4-0613" matches "gpt-4")
+        for (const auto& [key, limit] : MODEL_CONTEXT_LIMITS) {
+            if (model.find(key) == 0) {
+                context_limit = limit;
+                break;
+            }
+        }
+    }
+
+    // Reserve tokens for completion (default 1024 if not specified)
+    int reserved_tokens = (max_completion_tokens > 0) ? max_completion_tokens : 1024;
+
+    // Calculate available tokens for input messages
+    int available_tokens = context_limit - reserved_tokens;
+
+    // If no messages, return empty
+    if (messages.empty()) {
+        return messages;
+    }
+
+    // Helper to estimate tokens (1 token ≈ 4 chars + 20% buffer)
+    auto estimate_tokens = [](const std::string& text) -> int {
+        return static_cast<int>((text.length() / 4.0) * 1.2);
+    };
+
+    // Helper to count message tokens
+    auto count_message_tokens = [&estimate_tokens](const ChatMessage& msg) -> int {
+        int tokens = estimate_tokens(msg.content);
+        tokens += 4; // Message structure overhead
+
+        // Add tokens for tool calls if present
+        if (!msg.tool_calls.is_null() && msg.tool_calls.is_array()) {
+            tokens += estimate_tokens(msg.tool_calls.dump());
+        }
+
+        return tokens;
+    };
+
+    // Strategy: Keep system messages + most recent messages that fit
+    std::vector<ChatMessage> truncated;
+    int token_count = 0;
+
+    // Step 1: Add all system messages first (always keep these)
+    for (const auto& msg : messages) {
+        if (msg.role == "system") {
+            truncated.push_back(msg);
+            token_count += count_message_tokens(msg);
+        }
+    }
+
+    // Step 2: Collect non-system messages
+    std::vector<ChatMessage> non_system_messages;
+    for (const auto& msg : messages) {
+        if (msg.role != "system") {
+            non_system_messages.push_back(msg);
+        }
+    }
+
+    // Step 3: Add messages from most recent backwards until we hit limit
+    for (auto it = non_system_messages.rbegin(); it != non_system_messages.rend(); ++it) {
+        int msg_tokens = count_message_tokens(*it);
+
+        // Check if adding this message would exceed limit
+        if (token_count + msg_tokens > available_tokens) {
+            // Log warning if we're dropping messages
+            if (truncated.size() < messages.size()) {
+                std::cerr << "WARNING: Context window truncation for model '" << model
+                          << "' - keeping " << truncated.size() << " of " << messages.size()
+                          << " messages (limit: " << context_limit << " tokens)\n";
+            }
+            break;
+        }
+
+        truncated.push_back(*it);
+        token_count += msg_tokens;
+    }
+
+    // Step 4: Reverse the non-system messages to restore chronological order
+    size_t system_count = 0;
+    for (const auto& msg : truncated) {
+        if (msg.role == "system") system_count++;
+    }
+
+    // Reverse only the non-system portion
+    if (truncated.size() > system_count) {
+        std::reverse(truncated.begin() + system_count, truncated.end());
+    }
+
+    return truncated;
 }

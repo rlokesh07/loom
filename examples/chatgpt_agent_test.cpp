@@ -374,6 +374,53 @@ void test_ollama_to_chatgpt_conversation() {
     }
 }
 
+void test_context_window_truncation() {
+    std::cout << "\n=== Test: Context Window Truncation ===" << std::endl;
+
+    Agent agent(true);
+    if (!agent.has_api_key()) {
+        std::cout << "⚠️  SKIPPED: OPENAI_API_KEY not set" << std::endl;
+        return;
+    }
+
+    std::cout << "Testing context window truncation with long conversation history\n" << std::endl;
+
+    // Build a long conversation that will exceed gpt-3.5-turbo's 4096 token limit
+    agent.add_message("system", "You are a helpful assistant that provides concise responses.");
+
+    // Add many message pairs to exceed context window
+    for (int i = 0; i < 50; i++) {
+        std::string user_msg = "Question " + std::to_string(i) + ": Can you explain the importance of clean code practices in software development? Please provide detailed examples and best practices.";
+        std::string assistant_msg = "Answer " + std::to_string(i) + ": Clean code is extremely important for maintainability, readability, and collaboration. Key principles include meaningful naming, small focused functions, proper error handling, and comprehensive testing. Examples include using descriptive variable names, keeping functions under 20 lines, applying SOLID principles, and writing self-documenting code.";
+
+        agent.add_message("user", user_msg);
+        agent.add_message("assistant", assistant_msg);
+    }
+
+    std::cout << "Created conversation with " << agent.get_history().size() << " messages" << std::endl;
+    std::cout << "This should exceed gpt-3.5-turbo's 4096 token limit\n" << std::endl;
+
+    // Now make a request - truncation should happen automatically
+    std::map<std::string, std::any> params = {
+        {"message", std::string("What is the most important principle of clean code?")},
+        {"model", std::string("gpt-3.5-turbo")},
+        {"max_tokens", 100}
+    };
+
+    std::cout << "Making request with model: gpt-3.5-turbo" << std::endl;
+    std::cout << "Expected: Context window truncation warning, then successful response\n" << std::endl;
+
+    auto result = agent.execute_safe(params);
+
+    if (result.is_success()) {
+        std::cout << "\n✓ Context window truncation test passed" << std::endl;
+        std::cout << "  Response received despite long conversation history" << std::endl;
+        std::cout << "  Final history size: " << agent.get_history().size() << " messages" << std::endl;
+    } else {
+        std::cout << "\n✗ Test failed: " << result.get_message() << std::endl;
+    }
+}
+
 int main() {
     std::cout << R"(
 ╔════════════════════════════════════════════════════════════╗
@@ -410,7 +457,10 @@ int main() {
 
         // Ollama tests
         //test_ollama_agent();
-        test_ollama_to_chatgpt_conversation();
+        //test_ollama_to_chatgpt_conversation();
+
+        // Context window truncation test
+        test_context_window_truncation();
 
         std::cout << "\nTest suite finished successfully!" << std::endl;
 
