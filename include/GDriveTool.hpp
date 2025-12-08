@@ -1,7 +1,7 @@
 #ifndef GDRIVE_TOOL_HPP
 #define GDRIVE_TOOL_HPP
 
-#include "Tool.hpp"
+#include "OAuthTool.hpp"
 #include "ToolResult.hpp"
 #include <string>
 #include <nlohmann/json.hpp>
@@ -14,35 +14,11 @@ using json = nlohmann::json;
  * Allows agents to list, search, read, create, move, and delete files
  * and folders in Google Drive.
  *
- * Requires GOOGLE_OAUTH_CREDENTIALS environment variable to be set
- * to the path of a JSON file containing:
- * {
- *   "client_id": "xxx.apps.googleusercontent.com",
- *   "client_secret": "xxx",
- *   "refresh_token": "xxx"
- * }
+ * Requires session-based OAuth authentication via Google.
+ * The session must have Google OAuth tokens stored before using this tool.
  */
-class GDriveTool : public Tool {
+class GDriveTool : public OAuthTool {
 private:
-    std::string oauth_credentials_path_;
-    std::string access_token_;
-    std::chrono::time_point<std::chrono::system_clock> token_expiry_;
-
-    /**
-     * @brief Load OAuth credentials path from environment
-     */
-    std::string load_credentials_path_from_env() const;
-
-    /**
-     * @brief Authenticate using refresh token
-     */
-    bool authenticate();
-
-    /**
-     * @brief Check if current token is valid
-     */
-    bool is_token_valid() const;
-
     /**
      * @brief Make HTTP request to Google Drive API
      */
@@ -72,11 +48,9 @@ private:
     std::string get_string_param(const std::any& value) const;
     int get_int_param(const std::any& value) const;
 
-public:
-    GDriveTool();
-
+protected:
     /**
-     * @brief Execute Google Drive operation
+     * @brief Execute Google Drive operation (called after authentication)
      *
      * Parameters:
      * - operation (string, required): list, search, read, create, create_folder,
@@ -90,12 +64,10 @@ public:
      * - mime_type (string): MIME type for create (default: text/plain)
      * - max_results (int): Max results for list/search (default: 20)
      */
-    ToolResult execute(const std::map<std::string, std::any>& params) override;
+    ToolResult execute_authenticated(const std::map<std::string, std::any>& params) override;
 
-    /**
-     * @brief Check if OAuth credentials are available
-     */
-    bool has_credentials() const { return !oauth_credentials_path_.empty(); }
+public:
+    GDriveTool();
 };
 
 #endif // GDRIVE_TOOL_HPP

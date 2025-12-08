@@ -20,12 +20,17 @@ add_library(tool_system STATIC
     src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
     src/OllamaCompletionEngine.cpp
+    src/GeminiCompletionEngine.cpp
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
     src/WebSearchTool.cpp
     src/WebFetchTool.cpp
     src/GDriveTool.cpp
+    src/OAuthTool.cpp
+    src/OAuthRegistry.cpp
+    src/SessionOAuthStore.cpp
+    src/SupabaseClient.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -118,6 +123,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
+# Stateful API Server (original)
 add_executable(loom_api
     src/api_main.cpp
     src/ApiServer.cpp
@@ -130,7 +136,20 @@ target_link_libraries(loom_api PRIVATE
     httplib::httplib
 )
 
-# API Test
+# Stateless API Server (with Supabase)
+add_executable(loom_api_stateless
+    src/api_main_stateless.cpp
+    src/ApiServer_stateless.cpp
+    src/AvailableToolsRegistry.cpp
+    examples/CalculatorTool.cpp
+)
+
+target_link_libraries(loom_api_stateless PRIVATE
+    tool_system
+    httplib::httplib
+)
+
+# API Test (original stateful version)
 add_executable(api_test
     examples/api_test.cpp
 )
@@ -138,4 +157,14 @@ add_executable(api_test
 target_link_libraries(api_test PRIVATE
     nlohmann_json::nlohmann_json
     ${CURL_LIBRARIES}
+)
+
+# Stateless API Test
+add_executable(stateless_api_test
+    examples/stateless_api_test.cpp
+)
+
+target_link_libraries(stateless_api_test PRIVATE
+    httplib::httplib
+    nlohmann_json::nlohmann_json
 )

@@ -24,6 +24,13 @@ const std::map<std::string, int> CompletionEngine::MODEL_CONTEXT_LIMITS = {
     {"gpt-4o", 128000},
     {"gpt-4o-mini", 128000},
 
+    // Google Gemini models
+    {"gemini-1.0-pro", 32768},
+    {"gemini-1.5-pro", 2097152},      // 2M tokens
+    {"gemini-1.5-flash", 1048576},    // 1M tokens
+    {"gemini-2.0-flash", 1048576},    // 1M tokens
+    {"gemini-pro", 32768},
+
     // Ollama/Open source models
     {"llama2", 4096},
     {"llama3", 8192},

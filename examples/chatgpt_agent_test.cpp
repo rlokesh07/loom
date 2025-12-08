@@ -1,5 +1,6 @@
 #include "../include/Agent.hpp"
 #include "../include/OllamaCompletionEngine.hpp"
+#include "../include/GeminiCompletionEngine.hpp"
 #include "../include/ToolRegistry.hpp"
 #include "../include/GitHubTool.hpp"
 #include "../include/WebSearchTool.hpp"

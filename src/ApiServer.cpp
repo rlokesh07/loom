@@ -1,10 +1,14 @@
 #include "../include/ApiServer.hpp"
 #include "AvailableToolsRegistry.hpp"
+#include "OAuthRegistry.hpp"
+#include "OAuthTool.hpp"
+#include "SessionOAuthStore.hpp"
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <cstdlib>
 
 using json = nlohmann::json;
 
@@ -306,6 +310,145 @@ void ApiServer::configure_routes() {
         json response = {
             {"success", true},
             {"message", "History cleared"}
+        };
+
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // OAuth endpoints
+
+    // POST /api/sessions/:id/oauth/callback - Exchange auth code for tokens
+    server_.Post(R"(/api/sessions/([^/]+)/oauth/callback)", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        AgentSession* session = session_manager_.get_session(session_id);
+
+        if (!session) {
+            json error = {
+                {"error", {
+                    {"code", "SESSION_NOT_FOUND"},
+                    {"message", "Session with ID '" + session_id + "' not found"}
+                }}
+            };
+            res.status = 404;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        try {
+            json body = json::parse(req.body);
+            std::string code = body.at("code").get<std::string>();
+            std::string provider = body.at("provider").get<std::string>();
+
+            // Get redirect URI from env or body
+            std::string redirect_uri;
+            if (body.contains("redirect_uri")) {
+                redirect_uri = body["redirect_uri"].get<std::string>();
+            } else {
+                const char* env_redirect = std::getenv("OAUTH_REDIRECT_URI");
+                if (!env_redirect) {
+                    json error = {
+                        {"error", {
+                            {"code", "CONFIGURATION_ERROR"},
+                            {"message", "OAUTH_REDIRECT_URI not configured"}
+                        }}
+                    };
+                    res.status = 500;
+                    res.set_content(error.dump(), "application/json");
+                    return;
+                }
+                redirect_uri = env_redirect;
+            }
+
+            // Exchange code for tokens
+            OAuthTokens tokens = OAuthTool::exchange_authorization_code(code, provider, redirect_uri);
+
+            // Store in session
+            SessionOAuthStore::store_tokens(session_id, provider, tokens);
+
+            json response = {
+                {"success", true},
+                {"provider", provider},
+                {"message", "OAuth authentication successful"}
+            };
+
+            res.set_content(response.dump(), "application/json");
+
+        } catch (const json::exception& e) {
+            json error = {
+                {"error", {
+                    {"code", "INVALID_REQUEST"},
+                    {"message", e.what()}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+        } catch (const std::exception& e) {
+            json error = {
+                {"error", {
+                    {"code", "OAUTH_FAILED"},
+                    {"message", e.what()}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+        }
+    });
+
+    // GET /api/sessions/:id/oauth/:provider/status - Check OAuth status
+    server_.Get(R"(/api/sessions/([^/]+)/oauth/([^/]+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        std::string provider = req.matches[2];
+
+        AgentSession* session = session_manager_.get_session(session_id);
+
+        if (!session) {
+            json error = {
+                {"error", {
+                    {"code", "SESSION_NOT_FOUND"},
+                    {"message", "Session with ID '" + session_id + "' not found"}
+                }}
+            };
+            res.status = 404;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        bool has_valid_tokens = SessionOAuthStore::has_valid_tokens(session_id, provider);
+
+        json response = {
+            {"session_id", session_id},
+            {"provider", provider},
+            {"authenticated", has_valid_tokens}
+        };
+
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // DELETE /api/sessions/:id/oauth/:provider - Disconnect OAuth provider
+    server_.Delete(R"(/api/sessions/([^/]+)/oauth/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        std::string provider = req.matches[2];
+
+        AgentSession* session = session_manager_.get_session(session_id);
+
+        if (!session) {
+            json error = {
+                {"error", {
+                    {"code", "SESSION_NOT_FOUND"},
+                    {"message", "Session with ID '" + session_id + "' not found"}
+                }}
+            };
+            res.status = 404;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        SessionOAuthStore::remove_tokens(session_id, provider);
+
+        json response = {
+            {"success", true},
+            {"provider", provider},
+            {"message", "OAuth tokens removed"}
         };
 
         res.set_content(response.dump(), "application/json");

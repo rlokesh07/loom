@@ -2,6 +2,35 @@
 
 ## Quick Start
 
+### Stateless Version (Recommended - with Supabase)
+
+```bash
+# 1. Set up Supabase (first time only)
+# - Create project at https://supabase.com
+# - Apply schema: migrations/001_initial_schema.sql in SQL editor
+# - Get API credentials from Settings → API
+
+# 2. Set environment variables
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_KEY="your-anon-key"
+export OPENAI_API_KEY="sk-..."
+
+# 3. Build and run
+cd build
+cmake --build . --target loom_api_stateless
+./loom_api_stateless
+
+# Server runs on http://localhost:8080
+```
+
+**Benefits of stateless version:**
+- ✅ Data persists across server restarts
+- ✅ Horizontal scaling ready (run multiple instances)
+- ✅ All state in Supabase database
+- ✅ Production-ready architecture
+
+### Original Version (In-Memory, Stateful)
+
 ```bash
 # Build and run the server
 cd build
@@ -10,6 +39,8 @@ cmake --build . --target loom_api
 
 # Server runs on http://localhost:8080
 ```
+
+**Note:** Stateful version loses all sessions on restart. Use for quick local testing only.
 
 ## Endpoints
 
@@ -261,12 +292,22 @@ Only `source_session_id` is required. `tool_name` and `tool_description` are opt
 
 ## Environment Variables
 
+### Required for Stateless Version
+
 | Variable | Description |
 |----------|-------------|
-| `LOOM_API_PORT` | Server port (default: 8080) |
+| `SUPABASE_URL` | Your Supabase project URL (e.g., `https://xxx.supabase.co`) |
+| `SUPABASE_KEY` | Your Supabase anon/public API key |
 | `OPENAI_API_KEY` | Required for ChatGPT engine |
-| `BRAVE_SEARCH_API_KEY` | Required for WebSearchTool |
-| `GITHUB_TOKEN` | Required for GitHubTool |
+
+### Optional
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOOM_API_PORT` | Server port | 8080 |
+| `LOOM_CLIENT_ID` | Client identifier for multi-tenancy | "default-client" |
+| `BRAVE_SEARCH_API_KEY` | Required for WebSearchTool | - |
+| `GITHUB_TOKEN` | Required for GitHubTool | - |
 
 ---
 
@@ -384,3 +425,142 @@ curl -X POST http://localhost:8080/api/sessions \
     "model": "llama3.1:8b"
   }'
 ```
+
+---
+
+## Stateless Architecture Details
+
+### How It Works
+
+The stateless version follows this pattern for every request:
+
+1. **Load State from Database**
+   - Session metadata (engine, model, system_prompt)
+   - Conversation history (all messages)
+   - Tool configuration (registered tool names)
+
+2. **Reconstruct Runtime Objects**
+   - Create fresh `CompletionEngine` (ChatGPT/Ollama/Gemini)
+   - Create fresh `Agent` instance
+   - Build `ToolRegistry` from tool names
+   - Load conversation history into agent
+
+3. **Execute**
+   - Agent processes request with loaded context
+   - Agent can use registered tools
+
+4. **Save State Back to Database**
+   - Append new user message
+   - Append new assistant response
+   - Update last_accessed_at timestamp
+
+5. **Clean Up**
+   - Agent instance destroyed
+   - All runtime objects released
+   - No state persists in server memory
+
+### Testing Stateless Behavior
+
+**Test 1: Persistence Across Restarts**
+```bash
+# Create session and send message
+SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
+
+curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Remember the number 42"}'
+
+# Stop server (Ctrl+C)
+# Restart server
+# Query history - data should still be there!
+curl http://localhost:8080/api/sessions/$SESSION/history
+```
+
+**Test 2: Multiple Server Instances (Horizontal Scaling)**
+```bash
+# Terminal 1
+export LOOM_API_PORT=8080
+./loom_api_stateless
+
+# Terminal 2
+export LOOM_API_PORT=8081
+./loom_api_stateless
+
+# Terminal 3 - Test
+SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
+
+# Send message to server 1
+curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello from server 1"}'
+
+# Query from server 2 - should see the same data!
+curl http://localhost:8081/api/sessions/$SESSION/history
+```
+
+### Database Schema
+
+The stateless version uses these Supabase tables:
+
+**sessions**
+- `session_id` (UUID, primary key)
+- `client_id` (UUID, for multi-tenancy)
+- `engine_type` (chatgpt/ollama/gemini)
+- `model` (model name)
+- `system_prompt` (optional system instructions)
+- `conversation_history` (JSONB array of messages)
+- `tool_names` (TEXT[] array of registered tools)
+- `created_at`, `last_accessed_at` (timestamps)
+
+**child_sessions** (for agent-as-tool support)
+- `parent_session_id` (UUID)
+- `tool_name` (TEXT)
+- `child_session_id` (UUID)
+
+**clients** (for multi-tenancy - future use)
+- `client_id` (UUID, primary key)
+- `api_key_hash` (for authentication)
+- `display_name`, quotas, timestamps
+
+### Viewing Data in Supabase
+
+Go to your Supabase project dashboard:
+1. Click **Table Editor**
+2. Select **sessions** table
+3. See all session data including conversation_history JSONB
+4. Query, filter, and inspect data directly
+
+---
+
+## Troubleshooting
+
+### "Database connection failed"
+- Verify `SUPABASE_URL` and `SUPABASE_KEY` are set correctly
+- Check you've applied the schema (`migrations/001_initial_schema.sql`)
+- Verify internet connection
+
+### "Session not found"
+- Ensure you're using the correct `session_id`
+- Check the session exists in Supabase dashboard
+- Verify you're using the same `LOOM_CLIENT_ID`
+
+### Messages not persisting
+- Check the stateless version is running (not the stateful version)
+- Verify `add_message` calls are completing successfully
+- Inspect `conversation_history` column in Supabase dashboard
+
+---
+
+## Migration from Stateful to Stateless
+
+If you have existing code using the old stateful API, the endpoints are identical. You only need to:
+
+1. Set up Supabase and apply schema
+2. Set `SUPABASE_URL` and `SUPABASE_KEY` environment variables
+3. Use `loom_api_stateless` instead of `loom_api`
+
+All API requests work exactly the same way!
