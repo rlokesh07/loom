@@ -75,9 +75,12 @@ json ChatGPTCompletionEngine::build_request_body(const std::vector<ChatMessage>&
     // Model
     request_body["model"] = model;
 
-    // Messages
+    // Truncate messages to fit context window
+    std::vector<ChatMessage> truncated_messages = truncate_messages(messages, model, max_tokens);
+
+    // Messages (use truncated version)
     json messages_json = json::array();
-    for (const auto& msg : messages) {
+    for (const auto& msg : truncated_messages) {
         messages_json.push_back(msg.to_json());
     }
     request_body["messages"] = messages_json;

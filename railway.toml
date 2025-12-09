@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "./build/loom_api_stateless"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
