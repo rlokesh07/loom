@@ -123,18 +123,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-# Stateful API Server (original)
-add_executable(loom_api
-    src/api_main.cpp
-    src/ApiServer.cpp
-    src/AvailableToolsRegistry.cpp
-    examples/CalculatorTool.cpp
-)
 
-target_link_libraries(loom_api PRIVATE
-    tool_system
-    httplib::httplib
-)
 
 # Stateless API Server (with Supabase)
 add_executable(loom_api_stateless

@@ -460,16 +460,14 @@ bool test_delete_session() {
 
 int main() {
     std::cout << R"(
-╔════════════════════════════════════════════════════════════╗
-║         Stateless API Server Test Suite                   ║
-║                                                            ║
-║  This test suite tests the stateless REST API endpoints.  ║
-║                                                            ║
-║  Prerequisites:                                            ║
-║  - API server must be running (./api_main_stateless)       ║
-║  - SUPABASE_URL and SUPABASE_KEY must be set               ║
-║  - OPENAI_API_KEY for ChatGPT tests (optional)             ║
-╚════════════════════════════════════════════════════════════╝
+         Stateless API Server Test Suite                   
+                                                         
+  This test suite tests the stateless REST API endpoints.
+                                                        
+  Prerequisites:                                       
+  - API server must be running (./api_main_stateless) 
+  - SUPABASE_URL and SUPABASE_KEY must be set        
+  - OPENAI_API_KEY for ChatGPT tests (optional)     
 )" << std::endl;
 
     int passed = 0;
@@ -510,13 +508,10 @@ int main() {
     }
 
     // Print summary
-    std::cout << "\n╔════════════════════════════════════════════════════════════╗" << std::endl;
-    std::cout << "║                    Test Summary                            ║" << std::endl;
-    std::cout << "╠════════════════════════════════════════════════════════════╣" << std::endl;
-    std::cout << "║  Total:  " << total << " tests                                        ║" << std::endl;
-    std::cout << "║  Passed: " << passed << " tests                                        ║" << std::endl;
-    std::cout << "║  Failed: " << failed << " tests                                        ║" << std::endl;
-    std::cout << "╚════════════════════════════════════════════════════════════╝" << std::endl;
+    std::cout << "                    Test Summary                            " << std::endl;
+    std::cout << "  Total:  " << total << " tests                                        " << std::endl;
+    std::cout << "  Passed: " << passed << " tests                                        " << std::endl;
+    std::cout << "  Failed: " << failed << " tests                                        " << std::endl;
 
     if (failed == 0) {
         std::cout << "\n🎉 All tests passed!" << std::endl;
