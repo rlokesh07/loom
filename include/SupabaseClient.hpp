@@ -83,6 +83,21 @@ class SupabaseClient{
 
         // List all sessions for a client
         std::vector<SessionMetadata> listClientSessions(const std::string& client_id);
+
+        // ===== Multi-Tenancy Authentication Methods =====
+
+        // Authenticate API key and return client_id
+        // Returns client_id if api_key_hash matches, nullopt otherwise
+        std::optional<std::string> authenticate_client(const std::string& api_key_hash);
+
+        // Create new client with hashed API key
+        // Returns client_id on success, nullopt on failure
+        std::optional<std::string> create_client(const std::string& api_key_hash,
+                                                  const std::string& display_name);
+
+        // Set RLS session variable for this connection
+        // Must be called before any queries to enforce Row Level Security
+        void set_client_context(const std::string& client_id);
 };
 
 #endif // SUPABASE_CLIENT_HPP

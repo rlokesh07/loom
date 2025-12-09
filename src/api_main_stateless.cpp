@@ -1,5 +1,6 @@
 #include "../include/ApiServer_stateless.hpp"
 #include "../include/SupabaseClient.hpp"
+#include "../include/AuthManager.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <memory>
@@ -40,36 +41,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Get client ID from environment or use default UUID
-    std::string client_id = "00000000-0000-0000-0000-000000000000";  // Default UUID for testing
-    const char* client_id_env = std::getenv("LOOM_CLIENT_ID");
-    if (client_id_env) {
-        client_id = client_id_env;
-    }
-
     std::cout << "\nInitializing Supabase client..." << std::endl;
 
     // Create Supabase database client
     auto db = std::make_shared<SupabaseClient>(supabase_key, supabase_url);
+    std::cout << "✓ Supabase client initialized" << std::endl;
 
-    // Test database connection
-    std::cout << "Testing database connection..." << std::endl;
-    try {
-        auto sessions = db->listClientSessions(client_id);
-        std::cout << "✓ Database connection successful" << std::endl;
-        std::cout << "  Found " << sessions.size() << " existing session(s) for client: " << client_id << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "✗ Database connection failed: " << e.what() << std::endl;
-        std::cerr << "\nPlease check:" << std::endl;
-        std::cerr << "  1. Your Supabase URL and API key are correct" << std::endl;
-        std::cerr << "  2. The database schema has been applied (migrations/001_initial_schema.sql)" << std::endl;
-        std::cerr << "  3. Your internet connection is working" << std::endl;
-        return 1;
-    }
+    // Create AuthManager for multi-tenant authentication
+    std::cout << "Initializing AuthManager..." << std::endl;
+    auto auth = std::make_shared<AuthManager>(db);
+    std::cout << "✓ AuthManager initialized" << std::endl;
 
     // Create API server
     std::cout << "\nCreating API server..." << std::endl;
-    ApiServer server(port, db, client_id);
+    ApiServer server(port, db, auth);
 
     std::cout << "\n════════════════════════════════════════════════════════════" << std::endl;
     std::cout << "Server ready!" << std::endl;

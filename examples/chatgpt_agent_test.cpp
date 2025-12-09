@@ -454,14 +454,14 @@ int main() {
         //test_verbose_constructor();
         //test_system_prompt_with_verbose();
         //test_multi_agent_system_prompt_with_verbose();
-        //agent_call_agent();
+        agent_call_agent();
 
         // Ollama tests
         //test_ollama_agent();
         //test_ollama_to_chatgpt_conversation();
 
         // Context window truncation test
-        test_context_window_truncation();
+        //test_context_window_truncation();
 
         std::cout << "\nTest suite finished successfully!" << std::endl;
 

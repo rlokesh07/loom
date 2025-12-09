@@ -456,3 +456,65 @@ bool SupabaseClient::unregisterChildSession(const std::string& parentSessionID, 
         return false;
     }
 }
+
+// ============================================
+// Multi-Tenancy Authentication Methods
+// ============================================
+
+std::optional<std::string> SupabaseClient::authenticate_client(const std::string& api_key_hash) {
+    try {
+        // Query: SELECT client_id FROM clients WHERE api_key_hash = $1
+        std::string query = "api_key_hash=eq." + api_key_hash + "&select=client_id";
+        std::string response = makeRequest("GET", "/rest/v1/clients", json::object(), query);
+
+        json response_json = json::parse(response);
+
+        // Check if we got a result
+        if (response_json.is_array() && !response_json.empty()) {
+            return response_json[0]["client_id"].get<std::string>();
+        }
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "Error authenticating client: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+std::optional<std::string> SupabaseClient::create_client(const std::string& api_key_hash,
+                                                           const std::string& display_name) {
+    try {
+        // INSERT INTO clients (api_key_hash, display_name) RETURNING client_id
+        json body = {
+            {"api_key_hash", api_key_hash},
+            {"display_name", display_name}
+        };
+
+        std::string response = makeRequest("POST", "/rest/v1/clients", body);
+        json response_json = json::parse(response);
+
+        // Supabase returns an array with the inserted row
+        if (response_json.is_array() && !response_json.empty()) {
+            return response_json[0]["client_id"].get<std::string>();
+        }
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating client: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+void SupabaseClient::set_client_context(const std::string& client_id) {
+    try {
+        // Call custom RPC function to set session variable
+        // This calls the set_client_context() function created in Supabase
+        json body = {
+            {"p_client_id", client_id}
+        };
+
+        makeRequest("POST", "/rest/v1/rpc/set_client_context", body);
+    } catch (const std::exception& e) {
+        std::cerr << "Error setting client context: " << e.what() << std::endl;
+    }
+}

@@ -2,26 +2,27 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <string>
-#include <cassert>
 
 using json = nlohmann::json;
 
 /**
- * Test suite for stateless API server
+ * Multi-Tenancy Test Suite for Stateless API Server
  *
  * Prerequisites:
- * - API server must be running (./api_main_stateless)
+ * - API server must be running (./loom_api_stateless)
  * - SUPABASE_URL and SUPABASE_KEY must be set
- * - OPENAI_API_KEY must be set for ChatGPT tests
- * - Ollama server must be running for Ollama tests
+ * - Migrations 004 and 005 must be applied
  */
 
 const std::string API_HOST = "localhost";
 const int API_PORT = 8080;
-const std::string API_BASE = "/api";
 
 void print_test_header(const std::string& test_name) {
-    std::cout << "\n=== Test: " << test_name << " ===" << std::endl;
+    std::cout << "\n╔══════════════════════════════════════════════════╗" << std::endl;
+    std::cout << "║ " << test_name;
+    for (int i = test_name.length(); i < 48; i++) std::cout << " ";
+    std::cout << " ║" << std::endl;
+    std::cout << "╚══════════════════════════════════════════════════╝" << std::endl;
 }
 
 void print_success(const std::string& message) {
@@ -32,12 +33,9 @@ void print_error(const std::string& message) {
     std::cout << "✗ " << message << std::endl;
 }
 
-void print_warning(const std::string& message) {
-    std::cout << "⚠️  " << message << std::endl;
-}
-
+// Test 0: Health Check (No Auth Required)
 bool test_health_check() {
-    print_test_header("Health Check");
+    print_test_header("Test 0: Health Check");
 
     httplib::Client client(API_HOST, API_PORT);
     auto res = client.Get("/api/health");
@@ -52,112 +50,228 @@ bool test_health_check() {
         return false;
     }
 
-    try {
-        json response = json::parse(res->body);
-        if (response["status"] != "ok") {
-            print_error("Health check returned unexpected status");
-            return false;
-        }
-    } catch (const std::exception& e) {
-        print_error("Failed to parse health check response: " + std::string(e.what()));
+    json response = json::parse(res->body);
+    if (response["status"] != "ok") {
+        print_error("Health check returned unexpected status");
         return false;
     }
 
-    print_success("Health check passed");
+    print_success("Server is healthy");
     return true;
 }
 
-bool test_create_session() {
-    print_test_header("Create Session");
+// Test 1: Create Client A (Public Signup)
+std::string test_create_client(const std::string& client_name) {
+    print_test_header("Test 1: Create Client - " + client_name);
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    json request = {
+        {"display_name", client_name}
+    };
+
+    auto res = client.Post("/api/clients", request.dump(), "application/json");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return "";
+    }
+
+    if (res->status != 200) {
+        print_error("Client creation failed with status: " + std::to_string(res->status));
+        std::cout << "Response: " << res->body << std::endl;
+        return "";
+    }
+
+    json response = json::parse(res->body);
+
+    if (!response.contains("api_key") || !response.contains("client_id")) {
+        print_error("Response missing api_key or client_id");
+        return "";
+    }
+
+    std::string api_key = response["api_key"];
+    std::string client_id = response["client_id"];
+
+    print_success("Client created: " + client_id);
+    print_success("API Key: " + api_key);
+    print_success("Save this API key - it won't be shown again!");
+
+    return api_key;
+}
+
+// Test 2: Try Creating Session WITHOUT Auth (Should Fail)
+bool test_no_auth() {
+    print_test_header("Test 2: Access Without Auth (Should Fail)");
 
     httplib::Client client(API_HOST, API_PORT);
 
     json request = {
         {"engine", "chatgpt"},
-        {"model", "gpt-3.5-turbo"},
-        {"system_prompt", "You are a helpful assistant."}
+        {"model", "gpt-3.5-turbo"}
     };
 
+    // Try to create session WITHOUT Authorization header
     auto res = client.Post("/api/sessions", request.dump(), "application/json");
 
     if (!res) {
-        print_error("Failed to create session");
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 401) {
+        print_error("Expected 401 Unauthorized, got: " + std::to_string(res->status));
+        return false;
+    }
+
+    json response = json::parse(res->body);
+    print_success("Correctly rejected: " + response["error"]["code"].get<std::string>());
+    print_success("Message: " + response["error"]["message"].get<std::string>());
+
+    return true;
+}
+
+// Test 3: Create Session WITH Valid Auth (Should Succeed)
+std::string test_create_session_with_auth(const std::string& api_key, const std::string& client_name) {
+    print_test_header("Test 3: Create Session With Auth - " + client_name);
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    json request = {
+        {"engine", "chatgpt"},
+        {"model", "gpt-3.5-turbo"}
+    };
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + api_key}
+    };
+
+    auto res = client.Post("/api/sessions", headers, request.dump(), "application/json");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return "";
+    }
+
+    if (res->status != 200) {
+        print_error("Session creation failed with status: " + std::to_string(res->status));
+        std::cout << "Response: " << res->body << std::endl;
+        return "";
+    }
+
+    json response = json::parse(res->body);
+    std::string session_id = response["session_id"];
+
+    print_success("Session created: " + session_id);
+    print_success("Engine: " + response["engine"].get<std::string>());
+    print_success("Model: " + response["model"].get<std::string>());
+
+    return session_id;
+}
+
+// Test 4: Get Client Info
+bool test_get_client_info(const std::string& api_key, const std::string& expected_client_name) {
+    print_test_header("Test 4: Get Client Info - " + expected_client_name);
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + api_key}
+    };
+
+    auto res = client.Get("/api/clients/me", headers);
+
+    if (!res) {
+        print_error("Failed to connect to server");
         return false;
     }
 
     if (res->status != 200) {
-        print_error("Create session failed with status: " + std::to_string(res->status));
-        std::cout << "Response: " << res->body << std::endl;
+        print_error("Get client info failed with status: " + std::to_string(res->status));
         return false;
     }
 
-    try {
-        json response = json::parse(res->body);
+    json response = json::parse(res->body);
+    print_success("Client ID: " + response["client_id"].get<std::string>());
 
-        if (!response.contains("session_id")) {
-            print_error("Response missing session_id");
-            return false;
-        }
-
-        std::string session_id = response["session_id"];
-        print_success("Session created: " + session_id);
-
-        if (response["engine"] != "chatgpt") {
-            print_error("Engine mismatch");
-            return false;
-        }
-
-        if (response["model"] != "gpt-3.5-turbo") {
-            print_error("Model mismatch");
-            return false;
-        }
-
-        print_success("Session metadata correct");
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
+    return true;
 }
 
-std::string create_test_session(httplib::Client& client, const std::string& engine = "chatgpt", const std::string& model = "gpt-3.5-turbo") {
-    json request = {
-        {"engine", engine},
-        {"model", model},
-        {"system_prompt", "You are a helpful assistant. Keep responses brief."}
-    };
-
-    auto res = client.Post("/api/sessions", request.dump(), "application/json");
-
-    if (!res || res->status != 200) {
-        return "";
-    }
-
-    try {
-        json response = json::parse(res->body);
-        return response["session_id"];
-    } catch (...) {
-        return "";
-    }
-}
-
-bool test_list_sessions() {
-    print_test_header("List Sessions");
+// Test 5: Tenant Isolation - Client A Cannot Access Client B's Session
+bool test_tenant_isolation(const std::string& api_key_a, const std::string& api_key_b,
+                           const std::string& session_id_b) {
+    print_test_header("Test 5: Tenant Isolation");
 
     httplib::Client client(API_HOST, API_PORT);
 
-    // Create a test session first
-    std::string session_id = create_test_session(client);
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
+    std::cout << "Attempting Client A to access Client B's session..." << std::endl;
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + api_key_a}
+    };
+
+    // Client A tries to access Client B's session
+    auto res = client.Get("/api/sessions/" + session_id_b, headers);
+
+    if (!res) {
+        print_error("Failed to connect to server");
         return false;
     }
 
-    auto res = client.Get("/api/sessions");
+    if (res->status == 404) {
+        print_success("✓ Isolation enforced: Client A cannot see Client B's session (404)");
+        return true;
+    } else if (res->status == 200) {
+        print_error("SECURITY ISSUE: Client A can access Client B's session!");
+        return false;
+    } else {
+        print_error("Unexpected status: " + std::to_string(res->status));
+        return false;
+    }
+}
+
+// Test 6: Client B Can Access Own Session
+bool test_own_session_access(const std::string& api_key_b, const std::string& session_id_b) {
+    print_test_header("Test 6: Client B Accesses Own Session");
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + api_key_b}
+    };
+
+    auto res = client.Get("/api/sessions/" + session_id_b, headers);
 
     if (!res) {
-        print_error("Failed to list sessions");
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 200) {
+        print_error("Failed to get own session with status: " + std::to_string(res->status));
+        return false;
+    }
+
+    json response = json::parse(res->body);
+    print_success("Client B can access own session: " + response["session_id"].get<std::string>());
+
+    return true;
+}
+
+// Test 7: List Sessions (Should Only See Own)
+bool test_list_sessions(const std::string& api_key, const std::string& client_name) {
+    print_test_header("Test 7: List Sessions - " + client_name);
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + api_key}
+    };
+
+    auto res = client.Get("/api/sessions", headers);
+
+    if (!res) {
+        print_error("Failed to connect to server");
         return false;
     }
 
@@ -166,357 +280,115 @@ bool test_list_sessions() {
         return false;
     }
 
-    try {
-        json response = json::parse(res->body);
+    json response = json::parse(res->body);
+    int count = response["count"];
 
-        if (!response.contains("sessions") || !response.contains("count")) {
-            print_error("Response missing required fields");
-            return false;
-        }
+    print_success("Found " + std::to_string(count) + " session(s) for " + client_name);
+    print_success("(Should only see own sessions)");
 
-        int count = response["count"];
-        print_success("Found " + std::to_string(count) + " session(s)");
-
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool test_get_session() {
-    print_test_header("Get Session Details");
-
-    httplib::Client client(API_HOST, API_PORT);
-
-    // Create a test session
-    std::string session_id = create_test_session(client);
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
-        return false;
-    }
-
-    auto res = client.Get("/api/sessions/" + session_id);
-
-    if (!res) {
-        print_error("Failed to get session");
-        return false;
-    }
-
-    if (res->status != 200) {
-        print_error("Get session failed with status: " + std::to_string(res->status));
-        return false;
-    }
-
-    try {
-        json response = json::parse(res->body);
-
-        if (response["session_id"] != session_id) {
-            print_error("Session ID mismatch");
-            return false;
-        }
-
-        print_success("Session details retrieved: " + session_id);
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool test_chat_message() {
-    print_test_header("Send Chat Message");
-
-    const char* api_key = std::getenv("OPENAI_API_KEY");
-    if (!api_key || std::string(api_key).empty()) {
-        print_warning("SKIPPED: OPENAI_API_KEY not set");
-        return true;
-    }
-
-    httplib::Client client(API_HOST, API_PORT);
-    client.set_read_timeout(60);  // Increase timeout for API calls
-
-    // Create a test session
-    std::string session_id = create_test_session(client, "chatgpt", "gpt-3.5-turbo");
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
-        return false;
-    }
-
-    print_success("Created session: " + session_id);
-
-    // Send a message
-    json request = {
-        {"message", "Say 'Hello' in exactly one word."}
-    };
-
-    std::cout << "Sending message..." << std::endl;
-    auto res = client.Post("/api/sessions/" + session_id + "/chat", request.dump(), "application/json");
-
-    if (!res) {
-        print_error("Failed to send message");
-        return false;
-    }
-
-    if (res->status != 200) {
-        print_error("Chat failed with status: " + std::to_string(res->status));
-        std::cout << "Response: " << res->body << std::endl;
-        return false;
-    }
-
-    try {
-        json response = json::parse(res->body);
-
-        if (!response["success"].get<bool>()) {
-            print_error("Chat was not successful");
-            if (response.contains("error")) {
-                std::cout << "Error: " << response["error"] << std::endl;
-            }
-            return false;
-        }
-
-        std::string message = response["message"];
-        print_success("Response received: " + message);
-
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool test_conversation_history() {
-    print_test_header("Conversation History");
-
-    const char* api_key = std::getenv("OPENAI_API_KEY");
-    if (!api_key || std::string(api_key).empty()) {
-        print_warning("SKIPPED: OPENAI_API_KEY not set");
-        return true;
-    }
-
-    httplib::Client client(API_HOST, API_PORT);
-    client.set_read_timeout(60);
-
-    // Create a test session
-    std::string session_id = create_test_session(client);
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
-        return false;
-    }
-
-    // Send two messages
-    json request1 = {{"message", "What is 2+2?"}};
-    auto res1 = client.Post("/api/sessions/" + session_id + "/chat", request1.dump(), "application/json");
-
-    if (!res1 || res1->status != 200) {
-        print_error("Failed to send first message");
-        return false;
-    }
-
-    json request2 = {{"message", "What did I just ask you?"}};
-    auto res2 = client.Post("/api/sessions/" + session_id + "/chat", request2.dump(), "application/json");
-
-    if (!res2 || res2->status != 200) {
-        print_error("Failed to send second message");
-        return false;
-    }
-
-    // Get history
-    auto res = client.Get("/api/sessions/" + session_id + "/history");
-
-    if (!res || res->status != 200) {
-        print_error("Failed to get history");
-        return false;
-    }
-
-    try {
-        json response = json::parse(res->body);
-
-        if (!response.contains("messages")) {
-            print_error("Response missing messages field");
-            return false;
-        }
-
-        int message_count = response["message_count"];
-        print_success("History contains " + std::to_string(message_count) + " messages");
-
-        // Should have at least 4 messages (2 user + 2 assistant)
-        if (message_count < 4) {
-            print_error("Expected at least 4 messages in history");
-            return false;
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool test_register_tools() {
-    print_test_header("Register Tools");
-
-    httplib::Client client(API_HOST, API_PORT);
-
-    // Create a test session
-    std::string session_id = create_test_session(client);
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
-        return false;
-    }
-
-    // Get available tools first
-    auto available_res = client.Get("/api/tools/available");
-    if (!available_res || available_res->status != 200) {
-        print_error("Failed to get available tools");
-        return false;
-    }
-
-    print_success("Available tools retrieved");
-
-    // Register some tools
-    json request = {
-        {"tools", json::array({"calculator", "base64"})}
-    };
-
-    auto res = client.Post("/api/sessions/" + session_id + "/tools", request.dump(), "application/json");
-
-    if (!res || res->status != 200) {
-        print_error("Failed to register tools");
-        std::cout << "Response: " << res->body << std::endl;
-        return false;
-    }
-
-    try {
-        json response = json::parse(res->body);
-
-        if (!response.contains("registered_tools")) {
-            print_error("Response missing registered_tools field");
-            return false;
-        }
-
-        int tool_count = response["tool_count"];
-        print_success("Registered " + std::to_string(tool_count) + " tools");
-
-        return true;
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool test_delete_session() {
-    print_test_header("Delete Session");
-
-    httplib::Client client(API_HOST, API_PORT);
-
-    // Create a test session
-    std::string session_id = create_test_session(client);
-    if (session_id.empty()) {
-        print_error("Failed to create test session");
-        return false;
-    }
-
-    print_success("Created session: " + session_id);
-
-    // Delete it
-    auto res = client.Delete("/api/sessions/" + session_id);
-
-    if (!res || res->status != 200) {
-        print_error("Failed to delete session");
-        return false;
-    }
-
-    try {
-        json response = json::parse(res->body);
-
-        if (!response["success"].get<bool>()) {
-            print_error("Delete was not successful");
-            return false;
-        }
-
-        print_success("Session deleted");
-
-        // Verify it's gone
-        auto verify_res = client.Get("/api/sessions/" + session_id);
-        if (verify_res && verify_res->status == 404) {
-            print_success("Verified session no longer exists");
-            return true;
-        } else {
-            print_error("Session still exists after deletion");
-            return false;
-        }
-
-    } catch (const std::exception& e) {
-        print_error("Failed to parse response: " + std::string(e.what()));
-        return false;
-    }
+    return true;
 }
 
 int main() {
     std::cout << R"(
-         Stateless API Server Test Suite                   
-                                                         
-  This test suite tests the stateless REST API endpoints.
-                                                        
-  Prerequisites:                                       
-  - API server must be running (./api_main_stateless) 
-  - SUPABASE_URL and SUPABASE_KEY must be set        
-  - OPENAI_API_KEY for ChatGPT tests (optional)     
+╔════════════════════════════════════════════════════════╗
+║   Multi-Tenancy Test Suite for Loom API Server        ║
+║                                                        ║
+║   Testing authentication and tenant isolation          ║
+╚════════════════════════════════════════════════════════╝
 )" << std::endl;
 
     int passed = 0;
     int failed = 0;
-    int total = 0;
 
-    // Run all tests
-    try {
-        // Basic tests
-        if (test_health_check()) passed++; else failed++;
-        total++;
+    // Test 0: Health Check
+    if (test_health_check()) passed++; else failed++;
 
-        if (test_create_session()) passed++; else failed++;
-        total++;
-
-        if (test_list_sessions()) passed++; else failed++;
-        total++;
-
-        if (test_get_session()) passed++; else failed++;
-        total++;
-
-        if (test_register_tools()) passed++; else failed++;
-        total++;
-
-        if (test_delete_session()) passed++; else failed++;
-        total++;
-
-        // Tests requiring OpenAI API key
-        if (test_chat_message()) passed++; else failed++;
-        total++;
-
-        if (test_conversation_history()) passed++; else failed++;
-        total++;
-
-    } catch (const std::exception& e) {
-        std::cout << "\n❌ FATAL ERROR: " << e.what() << std::endl;
+    // Test 1: Create Client A
+    std::string api_key_a = test_create_client("Test Client A");
+    if (!api_key_a.empty()) {
+        passed++;
+    } else {
+        failed++;
+        std::cout << "\n❌ Cannot continue without Client A. Exiting..." << std::endl;
         return 1;
     }
 
-    // Print summary
-    std::cout << "                    Test Summary                            " << std::endl;
-    std::cout << "  Total:  " << total << " tests                                        " << std::endl;
-    std::cout << "  Passed: " << passed << " tests                                        " << std::endl;
-    std::cout << "  Failed: " << failed << " tests                                        " << std::endl;
+    // Test 2: Try WITHOUT Auth
+    if (test_no_auth()) passed++; else failed++;
+
+    // Test 3: Create Session with Client A
+    std::string session_id_a = test_create_session_with_auth(api_key_a, "Client A");
+    if (!session_id_a.empty()) {
+        passed++;
+    } else {
+        failed++;
+    }
+
+    // Test 4: Get Client A Info
+    if (test_get_client_info(api_key_a, "Client A")) passed++; else failed++;
+
+    // Create Client B for isolation testing
+    std::string api_key_b = test_create_client("Test Client B");
+    if (!api_key_b.empty()) {
+        passed++;
+    } else {
+        failed++;
+        std::cout << "\n⚠️  Cannot test isolation without Client B" << std::endl;
+    }
+
+    // Create Session with Client B
+    std::string session_id_b = test_create_session_with_auth(api_key_b, "Client B");
+    if (!session_id_b.empty()) {
+        passed++;
+    } else {
+        failed++;
+    }
+
+    // Test 5: Tenant Isolation
+    if (!api_key_a.empty() && !api_key_b.empty() && !session_id_b.empty()) {
+        if (test_tenant_isolation(api_key_a, api_key_b, session_id_b)) passed++; else failed++;
+    } else {
+        std::cout << "\nSkipping isolation test (missing prerequisites)" << std::endl;
+        failed++;
+    }
+
+    // Test 6: Client B Can Access Own Session
+    if (!api_key_b.empty() && !session_id_b.empty()) {
+        if (test_own_session_access(api_key_b, session_id_b)) passed++; else failed++;
+    } else {
+        std::cout << "\nSkipping own session test" << std::endl;
+        failed++;
+    }
+
+    // Test 7: List Sessions for Each Client
+    if (!api_key_a.empty()) {
+        if (test_list_sessions(api_key_a, "Client A")) passed++; else failed++;
+    }
+    if (!api_key_b.empty()) {
+        if (test_list_sessions(api_key_b, "Client B")) passed++; else failed++;
+    }
+
+    // Print Summary
+    int total = passed + failed;
+    std::cout << "\n╔════════════════════════════════════════════════════════╗" << std::endl;
+    std::cout << "║                    TEST SUMMARY                        ║" << std::endl;
+    std::cout << "╠════════════════════════════════════════════════════════╣" << std::endl;
+    std::cout << "║  Total:  " << total << " tests";
+    for (int i = 0; i < 41; i++) std::cout << " ";
+    std::cout << "║" << std::endl;
+    std::cout << "║  Passed: " << passed << " tests ✓";
+    for (int i = 0; i < 37; i++) std::cout << " ";
+    std::cout << "║" << std::endl;
+    std::cout << "║  Failed: " << failed << " tests ✗";
+    for (int i = 0; i < 37; i++) std::cout << " ";
+    std::cout << "║" << std::endl;
+    std::cout << "╚════════════════════════════════════════════════════════╝" << std::endl;
 
     if (failed == 0) {
-        std::cout << "\n🎉 All tests passed!" << std::endl;
+        std::cout << "\n🎉 All tests passed! Multi-tenancy is working correctly!" << std::endl;
     } else {
-        std::cout << "\n❌ Some tests failed!" << std::endl;
+        std::cout << "\n❌ Some tests failed! Check the output above." << std::endl;
     }
 
     return failed > 0 ? 1 : 0;

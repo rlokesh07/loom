@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Find dependencies
 find_package(nlohmann_json 3.0.0 REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Tool System Library
 add_library(tool_system STATIC
@@ -31,6 +32,7 @@ add_library(tool_system STATIC
     src/OAuthRegistry.cpp
     src/SessionOAuthStore.cpp
     src/SupabaseClient.cpp
+    src/AuthManager.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -41,6 +43,8 @@ target_include_directories(tool_system PUBLIC
 target_link_libraries(tool_system PUBLIC
     nlohmann_json::nlohmann_json
     ${CURL_LIBRARIES}
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # Original executable

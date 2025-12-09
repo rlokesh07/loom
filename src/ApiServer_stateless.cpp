@@ -11,6 +11,11 @@
 
 using json = nlohmann::json;
 
+// Authentication macro for cleaner endpoint code
+#define REQUIRE_AUTH() \
+    std::string client_id; \
+    if (!authenticate_request(req, res, client_id)) return;
+
 // Helper to format timestamp as ISO 8601
 std::string format_timestamp(const std::chrono::time_point<std::chrono::system_clock>& tp) {
     auto time_t = std::chrono::system_clock::to_time_t(tp);
@@ -19,8 +24,8 @@ std::string format_timestamp(const std::chrono::time_point<std::chrono::system_c
     return ss.str();
 }
 
-ApiServer::ApiServer(int port, std::shared_ptr<SupabaseClient> db, const std::string& client_id)
-    : port_(port), db_(db), default_client_id_(client_id) {
+ApiServer::ApiServer(int port, std::shared_ptr<SupabaseClient> db, std::shared_ptr<AuthManager> auth)
+    : port_(port), db_(db), auth_(auth) {
     configure_cors();
     configure_routes();
 }
@@ -29,7 +34,7 @@ void ApiServer::configure_cors() {
     server_.set_default_headers({
         {"Access-Control-Allow-Origin", "*"},
         {"Access-Control-Allow-Methods", "GET, POST, DELETE, PATCH, OPTIONS"},
-        {"Access-Control-Allow-Headers", "Content-Type"}
+        {"Access-Control-Allow-Headers", "Content-Type, Authorization"}
     });
 
     // Handle preflight requests
@@ -63,14 +68,115 @@ std::shared_ptr<CompletionEngine> ApiServer::create_engine(const std::string& en
     throw std::invalid_argument("Unknown engine type: " + engine_type);
 }
 
+bool ApiServer::authenticate_request(const httplib::Request& req,
+                                      httplib::Response& res,
+                                      std::string& client_id_out) {
+    // 1. Get Authorization header
+    auto auth_header = req.get_header_value("Authorization");
+    if (auth_header.empty()) {
+        res.status = 401;
+        json error = {
+            {"error", {
+                {"code", "MISSING_AUTH"},
+                {"message", "Authorization header required"}
+            }}
+        };
+        res.set_content(error.dump(), "application/json");
+        return false;
+    }
+
+    // 2. Extract API key ("Bearer sk-xxx")
+    auto api_key_opt = AuthManager::extract_api_key(auth_header);
+    if (!api_key_opt) {
+        res.status = 401;
+        json error = {
+            {"error", {
+                {"code", "INVALID_AUTH_FORMAT"},
+                {"message", "Authorization format must be: Bearer <api-key>"}
+            }}
+        };
+        res.set_content(error.dump(), "application/json");
+        return false;
+    }
+
+    // 3. Authenticate and get client_id
+    auto client_id_opt = auth_->authenticate(api_key_opt.value());
+    if (!client_id_opt) {
+        res.status = 401;
+        json error = {
+            {"error", {
+                {"code", "INVALID_API_KEY"},
+                {"message", "Invalid or expired API key"}
+            }}
+        };
+        res.set_content(error.dump(), "application/json");
+        return false;
+    }
+
+    // 4. Set RLS context for this request
+    client_id_out = client_id_opt.value();
+    db_->set_client_context(client_id_out);
+
+    return true;
+}
+
 void ApiServer::configure_routes() {
     // Health check
     server_.Get("/api/health", [](const httplib::Request& req, httplib::Response& res) {
         res.set_content(R"({"status": "ok"})", "application/json");
     });
 
+    // POST /api/clients - Create new client (PUBLIC - no auth required!)
+    server_.Post("/api/clients", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json body = json::parse(req.body);
+            std::string display_name = body.value("display_name", "");
+
+            auto result = auth_->create_client(display_name);
+            if (!result) {
+                json error = {
+                    {"error", {
+                        {"code", "CLIENT_CREATION_FAILED"},
+                        {"message", "Failed to create client"}
+                    }}
+                };
+                res.status = 500;
+                res.set_content(error.dump(), "application/json");
+                return;
+            }
+
+            auto [client_id, api_key] = result.value();
+            json response = {
+                {"client_id", client_id},
+                {"api_key", api_key},
+                {"message", "Save this API key - it won't be shown again"}
+            };
+            res.set_content(response.dump(), "application/json");
+        } catch (const std::exception& e) {
+            json error = {
+                {"error", {
+                    {"code", "INVALID_REQUEST"},
+                    {"message", std::string("Error creating client: ") + e.what()}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+        }
+    });
+
+    // GET /api/clients/me - Get current client info (requires auth)
+    server_.Get("/api/clients/me", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
+
+        json response = {
+            {"client_id", client_id}
+        };
+        res.set_content(response.dump(), "application/json");
+    });
+
     // POST /api/sessions - Create new session
     server_.Post("/api/sessions", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         try {
             json body = json::parse(req.body);
 
@@ -79,7 +185,7 @@ void ApiServer::configure_routes() {
             std::string system_prompt = body.value("system_prompt", "");
 
             // Create session in database
-            auto session_id_opt = db_->createSession(engine, model, default_client_id_, system_prompt);
+            auto session_id_opt = db_->createSession(engine, model, client_id, system_prompt);
 
             if (!session_id_opt) {
                 json error = {
@@ -96,7 +202,7 @@ void ApiServer::configure_routes() {
             std::string session_id = session_id_opt.value();
 
             // Load session metadata to return details
-            auto session_opt = db_->getSession(session_id, default_client_id_);
+            auto session_opt = db_->getSession(session_id, client_id);
             if (!session_opt) {
                 json error = {
                     {"error", {
@@ -144,7 +250,8 @@ void ApiServer::configure_routes() {
 
     // GET /api/sessions - List all sessions
     server_.Get("/api/sessions", [this](const httplib::Request& req, httplib::Response& res) {
-        auto sessions = db_->listClientSessions(default_client_id_);
+        REQUIRE_AUTH();
+        auto sessions = db_->listClientSessions(client_id);
 
         json sessions_array = json::array();
         for (const auto& session : sessions) {
@@ -168,9 +275,10 @@ void ApiServer::configure_routes() {
 
     // GET /api/sessions/:id - Get session details
     server_.Get(R"(/api/sessions/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
 
         if (!session_opt) {
             json error = {
@@ -185,7 +293,7 @@ void ApiServer::configure_routes() {
         }
 
         auto session = session_opt.value();
-        auto history = db_->getConversationHistory(session_id, default_client_id_);
+        auto history = db_->getConversationHistory(session_id, client_id);
 
         json response = {
             {"session_id", session.id},
@@ -202,8 +310,9 @@ void ApiServer::configure_routes() {
 
     // DELETE /api/sessions/:id - Delete session
     server_.Delete(R"(/api/sessions/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
-        bool destroyed = db_->deleteSession(session_id, default_client_id_);
+        bool destroyed = db_->deleteSession(session_id, client_id);
 
         if (!destroyed) {
             json error = {
@@ -227,11 +336,12 @@ void ApiServer::configure_routes() {
 
     // POST /api/sessions/:id/chat - Send message (KEY STATELESS ENDPOINT)
     server_.Post(R"(/api/sessions/([^/]+)/chat)", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
         try {
             // 1. Load session metadata from database
-            auto session_opt = db_->getSession(session_id, default_client_id_);
+            auto session_opt = db_->getSession(session_id, client_id);
             if (!session_opt) {
                 json error = {
                     {"error", {
@@ -246,10 +356,10 @@ void ApiServer::configure_routes() {
             auto session = session_opt.value();
 
             // 2. Load conversation history from database
-            auto history = db_->getConversationHistory(session_id, default_client_id_);
+            auto history = db_->getConversationHistory(session_id, client_id);
 
             // 3. Load tool names from database
-            auto tool_names = db_->getSessionTools(session_id, default_client_id_);
+            auto tool_names = db_->getSessionTools(session_id, client_id);
 
             // 4. Build tool registry from names
             auto registry = build_tool_registry(tool_names);
@@ -289,10 +399,10 @@ void ApiServer::configure_routes() {
             auto result = agent.execute_safe(params);
 
             // 11. Save new messages to database
-            db_->add_message(session_id, default_client_id_, "user", user_message);
+            db_->add_message(session_id, client_id, "user", user_message);
             if (result.is_success()) {
                 std::string assistant_response = result.get_message();
-                db_->add_message(session_id, default_client_id_, "assistant", assistant_response);
+                db_->add_message(session_id, client_id, "assistant", assistant_response);
             }
 
             // 12. Build response
@@ -345,10 +455,11 @@ void ApiServer::configure_routes() {
 
     // GET /api/sessions/:id/history - Get conversation history
     server_.Get(R"(/api/sessions/([^/]+)/history)", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
@@ -362,7 +473,7 @@ void ApiServer::configure_routes() {
         }
 
         // Load history from database
-        auto history = db_->getConversationHistory(session_id, default_client_id_);
+        auto history = db_->getConversationHistory(session_id, client_id);
         json messages = json::array();
 
         for (const auto& msg : history) {
@@ -390,10 +501,11 @@ void ApiServer::configure_routes() {
 
     // DELETE /api/sessions/:id/history - Clear conversation history
     server_.Delete(R"(/api/sessions/([^/]+)/history)", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
@@ -407,7 +519,7 @@ void ApiServer::configure_routes() {
         }
 
         // Clear history in database
-        db_->clearHistory(session_id, default_client_id_);
+        db_->clearHistory(session_id, client_id);
 
         json response = {
             {"success", true},
@@ -433,10 +545,11 @@ void ApiServer::configure_routes() {
 
     // GET /api/sessions/:id/tools - List tools registered to session
     server_.Get(R"(/api/sessions/([^/]+)/tools)", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
@@ -450,7 +563,7 @@ void ApiServer::configure_routes() {
         }
 
         // Load tool names from database
-        auto tool_names = db_->getSessionTools(session_id, default_client_id_);
+        auto tool_names = db_->getSessionTools(session_id, client_id);
         json tools = json::array();
 
         for (const auto& name : tool_names) {
@@ -480,10 +593,11 @@ void ApiServer::configure_routes() {
 
     // POST /api/sessions/:id/tools - Register tools to session
     server_.Post(R"(/api/sessions/([^/]+)/tools)", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
@@ -513,7 +627,7 @@ void ApiServer::configure_routes() {
 
             // Register tools in database
             if (!registered.empty()) {
-                db_->registerTools(session_id, default_client_id_, registered);
+                db_->registerTools(session_id, client_id, registered);
             }
 
             json response = {
@@ -551,11 +665,12 @@ void ApiServer::configure_routes() {
 
     // DELETE /api/sessions/:id/tools/:name - Unregister tool from session
     server_.Delete(R"(/api/sessions/([^/]+)/tools/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        REQUIRE_AUTH();
         std::string session_id = req.matches[1];
         std::string tool_name = req.matches[2];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, default_client_id_);
+        auto session_opt = db_->getSession(session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
@@ -569,7 +684,7 @@ void ApiServer::configure_routes() {
         }
 
         // Unregister from database
-        db_->unregisterTools(session_id, default_client_id_, {tool_name});
+        db_->unregisterTools(session_id, client_id, {tool_name});
 
         json response = {
             {"session_id", session_id},
@@ -584,7 +699,8 @@ void ApiServer::configure_routes() {
 void ApiServer::start() {
     std::cout << "Loom API server starting on http://localhost:" << port_ << std::endl;
     std::cout << "Health check: http://localhost:" << port_ << "/api/health" << std::endl;
-    std::cout << "Client ID: " << default_client_id_ << std::endl;
+    std::cout << "Multi-tenant mode: Authentication required for all endpoints" << std::endl;
+    std::cout << "Signup endpoint: POST http://localhost:" << port_ << "/api/clients" << std::endl;
     server_.listen("0.0.0.0", port_);
 }
 
