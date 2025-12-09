@@ -1,0 +1,13 @@
+[phases.setup]
+nixPkgs = ["cmake", "gcc", "pkg-config"]
+aptPkgs = ["libssl-dev", "libcurl4-openssl-dev", "nlohmann-json3-dev"]
+
+[phases.build]
+cmds = [
+  "mkdir -p build",
+  "cd build && cmake ..",
+  "cd build && make loom_api_stateless"
+]
+
+[start]
+cmd = "./build/loom_api_stateless"
