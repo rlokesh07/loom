@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Find dependencies
 find_package(nlohmann_json 3.0.0 REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Tool System Library
 add_library(tool_system STATIC
@@ -20,12 +21,18 @@ add_library(tool_system STATIC
     src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
     src/OllamaCompletionEngine.cpp
+    src/GeminiCompletionEngine.cpp
     src/ToolRegistry.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
     src/WebSearchTool.cpp
     src/WebFetchTool.cpp
     src/GDriveTool.cpp
+    src/OAuthTool.cpp
+    src/OAuthRegistry.cpp
+    src/SessionOAuthStore.cpp
+    src/SupabaseClient.cpp
+    src/AuthManager.cpp
 )
 
 target_include_directories(tool_system PUBLIC
@@ -36,6 +43,8 @@ target_include_directories(tool_system PUBLIC
 target_link_libraries(tool_system PUBLIC
     nlohmann_json::nlohmann_json
     ${CURL_LIBRARIES}
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # Original executable
@@ -118,19 +127,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-add_executable(loom_api
-    src/api_main.cpp
-    src/ApiServer.cpp
+
+
+# Stateless API Server (with Supabase)
+add_executable(loom_api_stateless
+    src/api_main_stateless.cpp
+    src/ApiServer_stateless.cpp
     src/AvailableToolsRegistry.cpp
     examples/CalculatorTool.cpp
 )
 
-target_link_libraries(loom_api PRIVATE
+target_link_libraries(loom_api_stateless PRIVATE
     tool_system
     httplib::httplib
 )
 
-# API Test
+# API Test (original stateful version)
 add_executable(api_test
     examples/api_test.cpp
 )
@@ -138,4 +150,14 @@ add_executable(api_test
 target_link_libraries(api_test PRIVATE
     nlohmann_json::nlohmann_json
     ${CURL_LIBRARIES}
+)
+
+# Stateless API Test
+add_executable(stateless_api_test
+    examples/stateless_api_test.cpp
+)
+
+target_link_libraries(stateless_api_test PRIVATE
+    httplib::httplib
+    nlohmann_json::nlohmann_json
 )

@@ -1,8 +1,6 @@
 #include "../include/GDriveTool.hpp"
 #include <curl/curl.h>
-#include <fstream>
 #include <sstream>
-#include <cstdlib>
 #include <stdexcept>
 
 // Callback for CURL to write response
@@ -13,9 +11,7 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, std::str
 }
 
 GDriveTool::GDriveTool()
-    : Tool("gdrive", "Interact with Google Drive files and folders") {
-
-    oauth_credentials_path_ = load_credentials_path_from_env();
+    : OAuthTool("gdrive", "Interact with Google Drive files and folders", "google") {
 
     // Define parameters
     add_parameter(Parameter("operation", ParameterType::STRING,
@@ -38,11 +34,6 @@ GDriveTool::GDriveTool()
         "Maximum results (default: 20)", false));
 }
 
-std::string GDriveTool::load_credentials_path_from_env() const {
-    const char* creds_path = std::getenv("GOOGLE_OAUTH_CREDENTIALS");
-    return creds_path ? std::string(creds_path) : "";
-}
-
 std::string GDriveTool::get_string_param(const std::any& value) const {
     if (value.type() == typeid(std::string)) {
         return std::any_cast<std::string>(value);
@@ -61,67 +52,6 @@ int GDriveTool::get_int_param(const std::any& value) const {
         return static_cast<int>(std::any_cast<long>(value));
     }
     throw std::runtime_error("Parameter is not an integer");
-}
-
-bool GDriveTool::is_token_valid() const {
-    if (access_token_.empty()) return false;
-    return std::chrono::system_clock::now() < token_expiry_;
-}
-
-bool GDriveTool::authenticate() {
-    if (is_token_valid()) return true;
-
-    if (oauth_credentials_path_.empty()) {
-        return false;
-    }
-
-    // Read OAuth credentials file
-    std::ifstream file(oauth_credentials_path_);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    json credentials;
-    try {
-        file >> credentials;
-    } catch (...) {
-        return false;
-    }
-
-    // Exchange refresh token for access token
-    CURL* curl = curl_easy_init();
-    if (!curl) return false;
-
-    std::string response;
-    std::string post_data =
-        "client_id=" + credentials["client_id"].get<std::string>() +
-        "&client_secret=" + credentials["client_secret"].get<std::string>() +
-        "&refresh_token=" + credentials["refresh_token"].get<std::string>() +
-        "&grant_type=refresh_token";
-
-    curl_easy_setopt(curl, CURLOPT_URL, "https://oauth2.googleapis.com/token");
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_data.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-
-    if (res != CURLE_OK) return false;
-
-    try {
-        json token_response = json::parse(response);
-        if (token_response.contains("access_token")) {
-            access_token_ = token_response["access_token"];
-            int expires_in = token_response.value("expires_in", 3600);
-            token_expiry_ = std::chrono::system_clock::now() + std::chrono::seconds(expires_in - 60);
-            return true;
-        }
-    } catch (...) {
-        return false;
-    }
-
-    return false;
 }
 
 std::string GDriveTool::make_api_request(const std::string& endpoint,
@@ -406,17 +336,7 @@ ToolResult GDriveTool::get_file_info(const std::string& file_id) {
     return ToolResult::Success(result, "File info: " + result["name"].get<std::string>());
 }
 
-ToolResult GDriveTool::execute(const std::map<std::string, std::any>& params) {
-    // Check for credentials
-    if (!has_credentials()) {
-        return ToolResult::Error("GOOGLE_OAUTH_CREDENTIALS environment variable not set");
-    }
-
-    // Authenticate
-    if (!authenticate()) {
-        return ToolResult::Error("Failed to authenticate with Google Drive API");
-    }
-
+ToolResult GDriveTool::execute_authenticated(const std::map<std::string, std::any>& params) {
     try {
         std::string operation = get_string_param(params.at("operation"));
 

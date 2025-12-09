@@ -49,11 +49,11 @@ struct ChatMessage {
 class CompletionEngine {
 public:
     virtual ~CompletionEngine() = default;
-    
+
     // extract messages from a std::any parameter
     std::vector<ChatMessage> extract_messages(const std::any& messages_param) const;
 
-    // setting up the basic make request function that all engines need 
+    // setting up the basic make request function that all engines need
     virtual std::string make_request(const json& request_body) = 0;
 
 
@@ -76,6 +76,20 @@ public:
      */
     std::string parse_completion_response(const std::string& response_str,
                                          json& out_full_response) const;
+
+protected:
+    // Model context window limits (in tokens)
+    static const std::map<std::string, int> MODEL_CONTEXT_LIMITS;
+
+    /**
+     * @brief Truncate messages to fit within model context window
+     * Preserves system messages and keeps most recent messages
+     */
+    static std::vector<ChatMessage> truncate_messages(
+        const std::vector<ChatMessage>& messages,
+        const std::string& model,
+        int max_completion_tokens
+    );
 };
 
 #endif // COMPLETION_ENGINE_HPP
