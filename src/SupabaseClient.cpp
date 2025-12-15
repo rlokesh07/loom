@@ -1,4 +1,4 @@
-#include "SupabaseClient.hpp"
+#include "../include/SupabaseClient.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>

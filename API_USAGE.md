@@ -1,53 +1,111 @@
 # Loom API Usage Guide
 
+**Last Updated**: 2025-01-15 (Updated for multi-tenant authentication)
+
+**Production URL**: `https://loom-production.up.railway.app`
+
 ## Quick Start
 
-### Stateless Version (Recommended - with Supabase)
+### Using Production API (Recommended)
 
-```bash
-# 1. Set up Supabase (first time only)
-# - Create project at https://supabase.com
-# - Apply schema: migrations/001_initial_schema.sql in SQL editor
-# - Get API credentials from Settings → API
-
-# 2. Set environment variables
-export SUPABASE_URL="https://your-project.supabase.co"
-export SUPABASE_KEY="your-anon-key"
-export OPENAI_API_KEY="sk-..."
-
-# 3. Build and run
-cd build
-cmake --build . --target loom_api_stateless
-./loom_api_stateless
-
-# Server runs on http://localhost:8080
+The Loom API is deployed and ready to use at:
+```
+https://loom-production.up.railway.app
 ```
 
-**Benefits of stateless version:**
-- ✅ Data persists across server restarts
-- ✅ Horizontal scaling ready (run multiple instances)
-- ✅ All state in Supabase database
-- ✅ Production-ready architecture
-
-### Original Version (In-Memory, Stateful)
+No setup required! Just create a client and start using the API:
 
 ```bash
-# Build and run the server
-cd build
-cmake --build . --target loom_api
-./loom_api
+# 1. Create a client to get your API key
+API_KEY=$(curl -s -X POST https://loom-production.up.railway.app/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"My Application"}' | jq -r '.api_key')
 
-# Server runs on http://localhost:8080
+echo "Your API Key: $API_KEY"
+echo "⚠️ Save this key - it won't be shown again!"
+
+# 2. Create a session and start chatting
+SESSION=$(curl -s -X POST https://loom-production.up.railway.app/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
+
+echo "Session ID: $SESSION"
+
+# 3. Send a message
+curl -X POST https://loom-production.up.railway.app/api/sessions/$SESSION/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"message":"Hello! What can you help me with?"}'
 ```
 
-**Note:** Stateful version loses all sessions on restart. Use for quick local testing only.
+## Authentication
+
+**⚠️ IMPORTANT**: All endpoints (except `/api/health` and `/api/clients`) now require authentication using an API key.
+
+### 1. Create a Client (Get API Key)
+
+First, create a client to get an API key:
+
+```bash
+curl -X POST $API_BASE_URL/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "display_name": "My Application"
+  }'
+```
+
+Response:
+```json
+{
+  "client_id": "123e4567-e89b-12d3-a456-426614174000",
+  "api_key": "sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+  "message": "Save this API key - it won't be shown again"
+}
+```
+
+**⚠️ CRITICAL**: Save the `api_key` immediately! It's only shown once and cannot be retrieved later.
+
+### 2. Use API Key in Requests
+
+Include your API key in the `Authorization` header for all subsequent requests:
+
+```bash
+curl -H "Authorization: Bearer sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6" \
+  $API_BASE_URL/api/sessions
+```
+
+### 3. Get Current Client Info
+
+```bash
+curl $API_BASE_URL/api/clients/me \
+  -H "Authorization: Bearer sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+```
+
+```json
+{
+  "client_id": "123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+---
 
 ## Endpoints
 
-### Health Check
+**For all examples below, we'll use the production URL. If you're self-hosting, replace with your local URL:**
 
 ```bash
-curl http://localhost:8080/api/health
+# Using production API (recommended)
+export API_BASE_URL="https://loom-production.up.railway.app"
+
+# OR if self-hosting locally
+# export API_BASE_URL="http://localhost:8080"
+```
+
+### Health Check (No Auth Required)
+
+```bash
+curl $API_BASE_URL/api/health
 ```
 ```json
 {"status": "ok"}
@@ -57,11 +115,18 @@ curl http://localhost:8080/api/health
 
 ### Sessions
 
+**Note**: Set your API key as an environment variable for convenience:
+```bash
+# Get your API key first (see Quick Start above)
+export API_KEY="sk-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+```
+
 #### Create Session
 
 ```bash
-curl -X POST http://localhost:8080/api/sessions \
+curl -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "engine": "chatgpt",
     "model": "gpt-4o-mini",
@@ -77,12 +142,13 @@ curl -X POST http://localhost:8080/api/sessions \
 }
 ```
 
-Engine options: `chatgpt`, `ollama`
+Engine options: `chatgpt`, `ollama`, `gemini`
 
 #### List Sessions
 
 ```bash
-curl http://localhost:8080/api/sessions
+curl $API_BASE_URL/api/sessions \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -94,7 +160,8 @@ curl http://localhost:8080/api/sessions
 #### Get Session
 
 ```bash
-curl http://localhost:8080/api/sessions/sess-abc123
+curl $API_BASE_URL/api/sessions/sess-abc123 \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -109,7 +176,8 @@ curl http://localhost:8080/api/sessions/sess-abc123
 #### Delete Session
 
 ```bash
-curl -X DELETE http://localhost:8080/api/sessions/sess-abc123
+curl -X DELETE $API_BASE_URL/api/sessions/sess-abc123 \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {"success": true, "message": "Session deleted"}
@@ -122,8 +190,9 @@ curl -X DELETE http://localhost:8080/api/sessions/sess-abc123
 #### Send Message
 
 ```bash
-curl -X POST http://localhost:8080/api/sessions/sess-abc123/chat \
+curl -X POST $API_BASE_URL/api/sessions/sess-abc123/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "message": "Hello, how are you?",
     "system_prompt": "You are a helpful assistant.",
@@ -160,7 +229,8 @@ If the agent calls any tools during execution, the response includes a `tool_cal
 #### Get History
 
 ```bash
-curl http://localhost:8080/api/sessions/sess-abc123/history
+curl $API_BASE_URL/api/sessions/sess-abc123/history \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -177,7 +247,8 @@ curl http://localhost:8080/api/sessions/sess-abc123/history
 #### Clear History
 
 ```bash
-curl -X DELETE http://localhost:8080/api/sessions/sess-abc123/history
+curl -X DELETE $API_BASE_URL/api/sessions/sess-abc123/history \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {"success": true, "message": "History cleared"}
@@ -190,7 +261,8 @@ curl -X DELETE http://localhost:8080/api/sessions/sess-abc123/history
 #### List Available Tools
 
 ```bash
-curl http://localhost:8080/api/tools/available
+curl $API_BASE_URL/api/tools/available \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -207,7 +279,8 @@ curl http://localhost:8080/api/tools/available
 #### Get Session Tools
 
 ```bash
-curl http://localhost:8080/api/sessions/sess-abc123/tools
+curl $API_BASE_URL/api/sessions/sess-abc123/tools \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -222,8 +295,9 @@ curl http://localhost:8080/api/sessions/sess-abc123/tools
 #### Register Tools
 
 ```bash
-curl -X POST http://localhost:8080/api/sessions/sess-abc123/tools \
+curl -X POST $API_BASE_URL/api/sessions/sess-abc123/tools \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "tools": ["calculator", "web_search", "base64"]
   }'
@@ -249,7 +323,8 @@ If any tools are invalid, they will be listed in `failed_tools`:
 #### Unregister Tool
 
 ```bash
-curl -X DELETE http://localhost:8080/api/sessions/sess-abc123/tools/calculator
+curl -X DELETE $API_BASE_URL/api/sessions/sess-abc123/tools/calculator \
+  -H "Authorization: Bearer $API_KEY"
 ```
 ```json
 {
@@ -264,8 +339,9 @@ curl -X DELETE http://localhost:8080/api/sessions/sess-abc123/tools/calculator
 Register another session's agent as a tool, enabling multi-agent workflows.
 
 ```bash
-curl -X POST http://localhost:8080/api/sessions/sess-main456/tools/agent \
+curl -X POST $API_BASE_URL/api/sessions/sess-main456/tools/agent \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "source_session_id": "sess-researcher123",
     "tool_name": "researcher",
@@ -305,37 +381,52 @@ Only `source_session_id` is required. `tool_name` and `tool_description` are opt
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LOOM_API_PORT` | Server port | 8080 |
-| `LOOM_CLIENT_ID` | Client identifier for multi-tenancy | "default-client" |
 | `BRAVE_SEARCH_API_KEY` | Required for WebSearchTool | - |
 | `GITHUB_TOKEN` | Required for GitHubTool | - |
+| `GEMINI_API_KEY` | Required for Gemini engine | - |
+
+**Note**: `LOOM_CLIENT_ID` is no longer used. Multi-tenancy is now handled via API key authentication.
 
 ---
 
 ## Example: Complete Chat Session
 
 ```bash
-# 1. Create session
-SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+# 0. Create client and get API key (only do this once!)
+API_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
   -H "Content-Type: application/json" \
+  -d '{"display_name":"My App"}' | jq -r '.api_key')
+
+echo "API Key: $API_KEY"
+echo "⚠️ Save this key - it won't be shown again!"
+
+# 1. Create session
+SESSION=$(curl -s -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}' | jq -r '.session_id')
 
 echo "Session: $SESSION"
 
 # 2. Send message
-curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message": "What is 2+2?"}'
 
 # 3. Continue conversation
-curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message": "And what is that multiplied by 3?"}'
 
 # 4. Get full history
-curl http://localhost:8080/api/sessions/$SESSION/history
+curl $API_BASE_URL/api/sessions/$SESSION/history \
+  -H "Authorization: Bearer $API_KEY"
 
 # 5. Cleanup
-curl -X DELETE http://localhost:8080/api/sessions/$SESSION
+curl -X DELETE $API_BASE_URL/api/sessions/$SESSION \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 ---
@@ -343,28 +434,36 @@ curl -X DELETE http://localhost:8080/api/sessions/$SESSION
 ## Example: Chat Session with Tools
 
 ```bash
+# Assuming you already have API_KEY from client creation
+# If not, create client first (see previous example)
+
 # 1. Create session
-SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+SESSION=$(curl -s -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}' | jq -r '.session_id')
 
 echo "Session: $SESSION"
 
 # 2. Register tools
-curl -X POST http://localhost:8080/api/sessions/$SESSION/tools \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/tools \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"tools": ["calculator", "web_search"]}'
 
 # 3. Send message that uses tools
-curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message": "What is 15 * 7?"}'
 
 # 4. Check registered tools
-curl http://localhost:8080/api/sessions/$SESSION/tools
+curl $API_BASE_URL/api/sessions/$SESSION/tools \
+  -H "Authorization: Bearer $API_KEY"
 
 # 5. Cleanup
-curl -X DELETE http://localhost:8080/api/sessions/$SESSION
+curl -X DELETE $API_BASE_URL/api/sessions/$SESSION \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 ---
@@ -372,27 +471,33 @@ curl -X DELETE http://localhost:8080/api/sessions/$SESSION
 ## Example: Multi-Agent Workflow
 
 ```bash
+# Assuming you already have API_KEY from client creation
+
 # 1. Create a researcher agent with web tools
-RESEARCHER=$(curl -s -X POST http://localhost:8080/api/sessions \
+RESEARCHER=$(curl -s -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}' | jq -r '.session_id')
 
-curl -X POST http://localhost:8080/api/sessions/$RESEARCHER/tools \
+curl -X POST $API_BASE_URL/api/sessions/$RESEARCHER/tools \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"tools": ["web_search", "web_fetch"]}'
 
 echo "Researcher: $RESEARCHER"
 
 # 2. Create main orchestrator agent
-MAIN=$(curl -s -X POST http://localhost:8080/api/sessions \
+MAIN=$(curl -s -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}' | jq -r '.session_id')
 
 echo "Main: $MAIN"
 
 # 3. Register researcher as a tool for main agent
-curl -X POST http://localhost:8080/api/sessions/$MAIN/tools/agent \
+curl -X POST $API_BASE_URL/api/sessions/$MAIN/tools/agent \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d "{
     \"source_session_id\": \"$RESEARCHER\",
     \"tool_name\": \"researcher\",
@@ -400,13 +505,16 @@ curl -X POST http://localhost:8080/api/sessions/$MAIN/tools/agent \
   }"
 
 # 4. Main agent can now delegate research tasks
-curl -X POST http://localhost:8080/api/sessions/$MAIN/chat \
+curl -X POST $API_BASE_URL/api/sessions/$MAIN/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message": "Use the researcher to find the latest news about AI safety"}'
 
 # 5. Cleanup
-curl -X DELETE http://localhost:8080/api/sessions/$MAIN
-curl -X DELETE http://localhost:8080/api/sessions/$RESEARCHER
+curl -X DELETE $API_BASE_URL/api/sessions/$MAIN \
+  -H "Authorization: Bearer $API_KEY"
+curl -X DELETE $API_BASE_URL/api/sessions/$RESEARCHER \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 ---
@@ -417,12 +525,30 @@ curl -X DELETE http://localhost:8080/api/sessions/$RESEARCHER
 # Make sure Ollama is running
 ollama serve
 
-# Create Ollama session
-curl -X POST http://localhost:8080/api/sessions \
+# Create Ollama session (assuming you have API_KEY)
+curl -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "engine": "ollama",
     "model": "llama3.1:8b"
+  }'
+```
+
+---
+
+## Using with Gemini
+
+```bash
+# Make sure GEMINI_API_KEY is set in server environment
+
+# Create Gemini session (assuming you have API_KEY)
+curl -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "engine": "gemini",
+    "model": "gemini-pro"
   }'
 ```
 
@@ -463,19 +589,27 @@ The stateless version follows this pattern for every request:
 
 **Test 1: Persistence Across Restarts**
 ```bash
-# Create session and send message
-SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+# Create client and get API key
+API_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
   -H "Content-Type: application/json" \
+  -d '{"display_name":"Test"}' | jq -r '.api_key')
+
+# Create session and send message
+SESSION=$(curl -s -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
 
-curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message":"Remember the number 42"}'
 
 # Stop server (Ctrl+C)
 # Restart server
 # Query history - data should still be there!
-curl http://localhost:8080/api/sessions/$SESSION/history
+curl $API_BASE_URL/api/sessions/$SESSION/history \
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Test 2: Multiple Server Instances (Horizontal Scaling)**
@@ -489,17 +623,56 @@ export LOOM_API_PORT=8081
 ./loom_api_stateless
 
 # Terminal 3 - Test
-SESSION=$(curl -s -X POST http://localhost:8080/api/sessions \
+# Create client (only once, can use either server)
+API_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
   -H "Content-Type: application/json" \
+  -d '{"display_name":"Test"}' | jq -r '.api_key')
+
+SESSION=$(curl -s -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
 
 # Send message to server 1
-curl -X POST http://localhost:8080/api/sessions/$SESSION/chat \
+curl -X POST $API_BASE_URL/api/sessions/$SESSION/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message":"Hello from server 1"}'
 
 # Query from server 2 - should see the same data!
-curl http://localhost:8081/api/sessions/$SESSION/history
+curl http://localhost:8081/api/sessions/$SESSION/history \
+  -H "Authorization: Bearer $API_KEY"
+
+# Note: The above test is for self-hosted multi-instance deployment.
+# For Railway production, all requests go through the same URL.
+```
+
+**Test 3: Multi-Tenancy Isolation**
+```bash
+# Create two separate clients
+CLIENT_A_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"Client A"}' | jq -r '.api_key')
+
+CLIENT_B_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"Client B"}' | jq -r '.api_key')
+
+# Client A creates a session
+SESSION_A=$(curl -s -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $CLIENT_A_KEY" \
+  -d '{"engine":"chatgpt","model":"gpt-4o-mini"}' | jq -r '.session_id')
+
+# Client B tries to access Client A's session - should fail with 404
+curl $API_BASE_URL/api/sessions/$SESSION_A \
+  -H "Authorization: Bearer $CLIENT_B_KEY"
+
+# Expected: {"error": "Session not found"} or 404
+
+# Client A can access their own session - should succeed
+curl $API_BASE_URL/api/sessions/$SESSION_A \
+  -H "Authorization: Bearer $CLIENT_A_KEY"
 ```
 
 ### Database Schema
@@ -521,10 +694,13 @@ The stateless version uses these Supabase tables:
 - `tool_name` (TEXT)
 - `child_session_id` (UUID)
 
-**clients** (for multi-tenancy - future use)
+**clients** (for multi-tenancy authentication)
 - `client_id` (UUID, primary key)
-- `api_key_hash` (for authentication)
-- `display_name`, quotas, timestamps
+- `api_key_hash` (SHA-256 hash of API key for secure authentication)
+- `display_name` (optional client name)
+- `credentials_encrypted` (JSONB, encrypted per-client credentials for tools)
+- `max_sessions`, `max_requests_per_hour` (quotas)
+- `created_at`, `last_active_at` (timestamps)
 
 ### Viewing Data in Supabase
 
@@ -538,29 +714,84 @@ Go to your Supabase project dashboard:
 
 ## Troubleshooting
 
+### "Authorization header required" (401)
+- You forgot to include the `Authorization` header
+- Add `-H "Authorization: Bearer $API_KEY"` to your curl request
+- Make sure you created a client first with `POST /api/clients`
+
+### "Invalid or expired API key" (401)
+- The API key is incorrect or doesn't exist in the database
+- Verify you're using the correct API key from client creation
+- Create a new client if you lost your API key (it cannot be retrieved)
+
+### "Session not found" (404)
+- The session doesn't exist, or
+- **You're using a different client's API key** (Row-Level Security prevents cross-client access)
+- Verify the session belongs to the authenticated client
+
 ### "Database connection failed"
 - Verify `SUPABASE_URL` and `SUPABASE_KEY` are set correctly
-- Check you've applied the schema (`migrations/001_initial_schema.sql`)
+- Check you've applied all migrations in order (001 through 005)
 - Verify internet connection
-
-### "Session not found"
-- Ensure you're using the correct `session_id`
-- Check the session exists in Supabase dashboard
-- Verify you're using the same `LOOM_CLIENT_ID`
+- Check Supabase project is active and not paused
 
 ### Messages not persisting
 - Check the stateless version is running (not the stateful version)
 - Verify `add_message` calls are completing successfully
 - Inspect `conversation_history` column in Supabase dashboard
+- Check RLS policies are properly configured (migration 004)
+
+### Multi-tenancy not working
+- Verify you applied migration 004 (`enable_multi_tenancy.sql`)
+- Check RLS is enabled on sessions table: `SELECT tablename, rowsecurity FROM pg_tables WHERE tablename = 'sessions';`
+- Verify policies exist: `SELECT * FROM pg_policies WHERE tablename = 'sessions';`
 
 ---
 
 ## Migration from Stateful to Stateless
 
-If you have existing code using the old stateful API, the endpoints are identical. You only need to:
+If you have existing code using the old stateful API, here's what you need to update:
 
-1. Set up Supabase and apply schema
-2. Set `SUPABASE_URL` and `SUPABASE_KEY` environment variables
-3. Use `loom_api_stateless` instead of `loom_api`
+### 1. Set up Supabase
+- Create Supabase project
+- Apply all migrations (001 through 005) **in order**
+- Set `SUPABASE_URL` and `SUPABASE_KEY` environment variables
 
-All API requests work exactly the same way!
+### 2. Add Authentication
+**⚠️ BREAKING CHANGE**: All endpoints now require authentication
+
+**Old code** (stateful):
+```bash
+curl -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}'
+```
+
+**New code** (stateless with auth):
+```bash
+# First create a client
+API_KEY=$(curl -s -X POST $API_BASE_URL/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"My App"}' | jq -r '.api_key')
+
+# Then add Authorization header to all requests
+curl -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}'
+```
+
+### 3. Update Environment Variables
+- Remove: `LOOM_CLIENT_ID` (no longer used)
+- Keep: `SUPABASE_URL`, `SUPABASE_KEY`, `OPENAI_API_KEY`, etc.
+
+### 4. Use New Binary
+- Build and use `loom_api_stateless` instead of `loom_api`
+
+### Summary of Changes
+- ✅ All state persists in database (survives restarts)
+- ✅ Horizontally scalable (run multiple instances)
+- ⚠️ **REQUIRES**: `Authorization: Bearer <api-key>` header on all requests (except health check and client creation)
+- ⚠️ **REQUIRES**: Creating a client first with `POST /api/clients`
+- ✅ Multi-tenant with Row-Level Security
+- ✅ Engine support: chatgpt, ollama, gemini

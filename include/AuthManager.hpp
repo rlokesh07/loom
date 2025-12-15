@@ -11,13 +11,12 @@ class AuthManager {
 private:
     std::shared_ptr<SupabaseClient> db_;
 
+public:
     // Generate random API key with format: sk-{32 random chars}
-    std::string generate_api_key();
+    static std::string generate_api_key();
 
     // SHA-256 hash for storing API keys
-    std::string hash_api_key(const std::string& api_key);
-
-public:
+    static std::string hash_api_key(const std::string& api_key);
     // Constructor
     AuthManager(std::shared_ptr<SupabaseClient> db) : db_(db) {}
 
