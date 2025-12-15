@@ -10,9 +10,6 @@
 #include <vector>
 #include <memory>
 
-// Forward declarations to avoid circular dependency
-class AgentSessionManager;
-struct AgentSession;
 
 /**
  * @brief Agentic wrapper for LLM completion engines
@@ -39,7 +36,6 @@ private:
     ToolRegistryPtr tool_registry_;
     std::string default_model_;  // Default model to use
     std::string sessionID_;
-    AgentSessionManager* session_manager_;
     std::vector<ToolCallInfo> last_tool_calls_;  // Track tool calls from last execution
 
 public:
@@ -68,8 +64,6 @@ public:
     void add_message(const std::string& role, const std::string& content);
 
     void set_session_id(std::string sessionID);
-
-    void set_agent_session_manager(AgentSessionManager* sessionManager);
 
     const std::vector<ChatMessage>& get_history() const { return conversation_history_; }
 

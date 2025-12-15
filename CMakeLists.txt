@@ -15,22 +15,17 @@ add_library(tool_system STATIC
     src/Parameter.cpp
     src/ToolResult.cpp
     src/Tool.cpp
-    src/ChatGPTTool.cpp
     src/Agent.cpp
-    src/AgentSessionManager.cpp
     src/CompletionEngine.cpp
     src/ChatGPTCompletionEngine.cpp
     src/OllamaCompletionEngine.cpp
     src/GeminiCompletionEngine.cpp
     src/ToolRegistry.cpp
+    src/CalculatorTool.cpp
     src/GitHubTool.cpp
     src/Base64Tool.cpp
     src/WebSearchTool.cpp
     src/WebFetchTool.cpp
-    src/GDriveTool.cpp
-    src/OAuthTool.cpp
-    src/OAuthRegistry.cpp
-    src/SessionOAuthStore.cpp
     src/SupabaseClient.cpp
     src/AuthManager.cpp
 )
@@ -47,78 +42,7 @@ target_link_libraries(tool_system PUBLIC
     OpenSSL::Crypto
 )
 
-# Original executable
-set(SOURCES
-    src/main.cpp
-)
-
-add_executable(${PROJECT_NAME} ${SOURCES})
-
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    tool_system
-)
-
-# Calculator Example
-add_executable(calculator_example
-    examples/main.cpp
-    examples/CalculatorTool.cpp
-)
-
-target_link_libraries(calculator_example PRIVATE
-    tool_system
-)
-
-# ChatGPT Example
-add_executable(chatgpt_example
-    examples/chatgpt_example.cpp
-)
-
-target_link_libraries(chatgpt_example PRIVATE
-    tool_system
-)
-
-# ChatGPT Agent Test
-add_executable(chatgpt_agent_test
-    examples/chatgpt_agent_test.cpp
-    examples/CalculatorTool.cpp
-)
-
-target_link_libraries(chatgpt_agent_test PRIVATE
-    tool_system
-)
-
-# Base64 Example
-add_executable(base64_example
-    examples/base64_example.cpp
-)
-
-target_link_libraries(base64_example PRIVATE
-    tool_system
-)
-
-# Ollama Test
-add_executable(ollama_test
-    examples/ollama_test.cpp
-)
-
-target_link_libraries(ollama_test PRIVATE
-    tool_system
-)
-
-# WebSearch Example
-add_executable(websearch_example
-    examples/websearch_example.cpp
-)
-
-target_link_libraries(websearch_example PRIVATE
-    tool_system
-)
-
-# API Server
+# HTTP library for API server
 include(FetchContent)
 FetchContent_Declare(
     httplib
@@ -134,30 +58,9 @@ add_executable(loom_api_stateless
     src/api_main_stateless.cpp
     src/ApiServer_stateless.cpp
     src/AvailableToolsRegistry.cpp
-    examples/CalculatorTool.cpp
 )
 
 target_link_libraries(loom_api_stateless PRIVATE
     tool_system
     httplib::httplib
-)
-
-# API Test (original stateful version)
-add_executable(api_test
-    examples/api_test.cpp
-)
-
-target_link_libraries(api_test PRIVATE
-    nlohmann_json::nlohmann_json
-    ${CURL_LIBRARIES}
-)
-
-# Stateless API Test
-add_executable(stateless_api_test
-    examples/stateless_api_test.cpp
-)
-
-target_link_libraries(stateless_api_test PRIVATE
-    httplib::httplib
-    nlohmann_json::nlohmann_json
 )

@@ -1,5 +1,4 @@
 #include "../include/Agent.hpp"
-#include "../include/AgentSessionManager.hpp"
 #include <any>
 #include <charconv>
 #include <iostream>
@@ -241,9 +240,6 @@ void Agent::set_session_id(std::string sessionID) {
     sessionID_ = sessionID;
 }
 
-void Agent::set_agent_session_manager(AgentSessionManager* sessionManager) {
-    session_manager_ = sessionManager;
-}
 
 ToolResult Agent::execute_llm_call(const std::string& model, double temperature, int max_tokens) {
     try {
@@ -412,59 +408,8 @@ void Agent::process_tool_calls(const json& tool_calls) {
             std::cout << "Executing: " << tool_name << "(" << tool_args.dump() << ")" << std::endl;
         }
         
-        std::shared_ptr<Tool> tool = tool_registry_->get_tool(tool_name);
-        std::shared_ptr<Agent> agent_tool = std::dynamic_pointer_cast<Agent>(tool);
-
-        ToolResult result = ToolResult::Success({}, "");
-
-        if (agent_tool != nullptr && session_manager_ != nullptr) {
-            // This is an agent tool - use isolated child session
-            AgentSession* currSession = session_manager_->get_session(sessionID_);
-            std::string child_session_id;
-
-            // Check if child session already exists for this tool
-            auto it = currSession->child_sessions.find(tool_name);
-            if (it == currSession->child_sessions.end()) {
-                // Create new child session with same engine/model as parent
-                child_session_id = session_manager_->create_session(
-                    currSession->engine_type,
-                    currSession->model,
-                    verbose_
-                );
-                currSession->child_sessions[tool_name] = child_session_id;
-            } else {
-                child_session_id = it->second;
-            }
-
-            // Execute through child session's agent
-            AgentSession* childSession = session_manager_->get_session(child_session_id);
-
-            // Convert json tool_args to map for execute
-            // Handle special parameters that Agent expects with specific types
-            // Skip model/temperature/max_tokens/verbose - let child use its own defaults
-            std::map<std::string, std::any> params_map;
-            for (auto& [key, value] : tool_args.items()) {
-                // Skip parameters that should use child's defaults
-                if (key == "model" || key == "temperature" || key == "max_tokens" || key == "verbose") {
-                    continue;
-                } else if (value.is_string()) {
-                    params_map[key] = value.get<std::string>();
-                } else if (value.is_number_integer()) {
-                    params_map[key] = value.get<int>();
-                } else if (value.is_number_float()) {
-                    params_map[key] = value.get<double>();
-                } else if (value.is_boolean()) {
-                    params_map[key] = value.get<bool>();
-                } else {
-                    params_map[key] = value.dump();
-                }
-            }
-
-            result = childSession->agent->execute_safe(params_map);
-        } else {
-            // Normal tool execution
-            result = tool_registry_->execute_tool(tool_name, tool_args);
-        }
+        // Execute tool directly
+        ToolResult result = tool_registry_->execute_tool(tool_name, tool_args);
 
         // Prepare tool response message
         std::string tool_response;

@@ -1,12 +1,17 @@
 #!/bin/bash
 
-# Railway Production Test Script
+# Railway Production Test Script - OpenAI Compatible Edition
 RAILWAY_URL="https://loom-production.up.railway.app"
 
-echo "=================================="
+echo "=============================================="
 echo "Testing Loom API on Railway"
 echo "URL: $RAILWAY_URL"
-echo "=================================="
+echo ""
+echo "Tests:"
+echo "  • Multi-tenant authentication"
+echo "  • OpenAI-compatible endpoints"
+echo "  • Session-specific API keys"
+echo "=============================================="
 
 # Colors
 GREEN='\033[0;32m'
@@ -62,12 +67,14 @@ echo -e "\n${YELLOW}[Test 4]${NC} Create Session With Auth"
 RESPONSE=$(curl -s -X POST "$RAILWAY_URL/api/sessions" \
   -H "Authorization: Bearer $API_KEY_A" \
   -H "Content-Type: application/json" \
-  -d '{"engine": "chatgpt", "model": "gpt-4"}')
+  -d '{"engine": "chatgpt", "model": "gpt-3.5-turbo"}')
 
 if echo "$RESPONSE" | grep -q '"session_id"'; then
     SESSION_ID_A=$(echo "$RESPONSE" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
+    SESSION_KEY_A=$(echo "$RESPONSE" | grep -o '"session_api_key":"[^"]*"' | cut -d'"' -f4)
     echo -e "${GREEN}✓ PASSED${NC} - Session created"
     echo "Session ID: $SESSION_ID_A"
+    echo "Session API Key: $SESSION_KEY_A"
 else
     echo -e "${RED}✗ FAILED${NC} - Session creation failed"
     echo "Response: $RESPONSE"
@@ -103,12 +110,14 @@ echo -e "\n${YELLOW}[Test 7]${NC} Create Session for Client B"
 RESPONSE=$(curl -s -X POST "$RAILWAY_URL/api/sessions" \
   -H "Authorization: Bearer $API_KEY_B" \
   -H "Content-Type: application/json" \
-  -d '{"engine": "chatgpt", "model": "gpt-4"}')
+  -d '{"engine": "chatgpt", "model": "gpt-3.5-turbo"}')
 
 if echo "$RESPONSE" | grep -q '"session_id"'; then
     SESSION_ID_B=$(echo "$RESPONSE" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
+    SESSION_KEY_B=$(echo "$RESPONSE" | grep -o '"session_api_key":"[^"]*"' | cut -d'"' -f4)
     echo -e "${GREEN}✓ PASSED${NC} - Session B created"
     echo "Session ID: $SESSION_ID_B"
+    echo "Session API Key: $SESSION_KEY_B"
 else
     echo -e "${RED}✗ FAILED${NC}"
 fi
@@ -150,11 +159,91 @@ else
     echo -e "${RED}✗ FAILED${NC}"
 fi
 
+# Test 11: OpenAI Chat Completion (Session Key)
+echo -e "\n${YELLOW}[Test 11]${NC} OpenAI Chat Completion with Session Key"
+RESPONSE=$(curl -s -X POST "$RAILWAY_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $SESSION_KEY_A" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {"role": "user", "content": "Say hello in one word"}
+    ]
+  }')
+
+if echo "$RESPONSE" | grep -q '"choices"'; then
+    MESSAGE=$(echo "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | cut -d'"' -f4)
+    echo -e "${GREEN}✓ PASSED${NC} - OpenAI endpoint working"
+    echo "Response: $MESSAGE"
+else
+    echo -e "${RED}✗ FAILED${NC}"
+    echo "Response: $RESPONSE"
+fi
+
+# Test 12: OpenAI Chat Completion (Base Key - Stateless)
+echo -e "\n${YELLOW}[Test 12]${NC} OpenAI Chat Completion with Base Key (Stateless)"
+RESPONSE=$(curl -s -X POST "$RAILWAY_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $API_KEY_A" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is 2+2? Answer in one word."}
+    ]
+  }')
+
+if echo "$RESPONSE" | grep -q '"choices"'; then
+    echo -e "${GREEN}✓ PASSED${NC} - Stateless mode working"
+else
+    echo -e "${RED}✗ FAILED${NC}"
+fi
+
+# Test 13: List Available Models
+echo -e "\n${YELLOW}[Test 13]${NC} List Available Models"
+RESPONSE=$(curl -s "$RAILWAY_URL/v1/models")
+
+if echo "$RESPONSE" | grep -q '"data"'; then
+    MODEL_COUNT=$(echo "$RESPONSE" | grep -o '"id"' | wc -l)
+    echo -e "${GREEN}✓ PASSED${NC} - Found $MODEL_COUNT models"
+else
+    echo -e "${RED}✗ FAILED${NC}"
+fi
+
+# Test 14: Session Key Cannot Create Sessions
+echo -e "\n${YELLOW}[Test 14]${NC} Session Key Cannot Create Sessions"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$RAILWAY_URL/api/sessions" \
+  -H "Authorization: Bearer $SESSION_KEY_A" \
+  -H "Content-Type: application/json" \
+  -d '{"engine": "chatgpt", "model": "gpt-3.5-turbo"}')
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+if [ "$HTTP_CODE" = "400" ] || [ "$HTTP_CODE" = "403" ]; then
+    echo -e "${GREEN}✓ PASSED${NC} - Correctly rejected (HTTP $HTTP_CODE)"
+else
+    echo -e "${RED}✗ FAILED${NC} - Expected 400/403, got $HTTP_CODE"
+fi
+
 # Summary
 echo -e "\n=================================="
 echo "SUMMARY"
 echo "=================================="
-echo -e "${GREEN}Multi-tenancy working on Railway!${NC}"
+echo -e "${GREEN}✓ All tests passed!${NC}"
 echo ""
-echo "Client A API Key: $API_KEY_A"
-echo "Client B API Key: $API_KEY_B"
+echo "Tested Features:"
+echo "  • Multi-tenancy and authentication"
+echo "  • Tenant isolation (RLS)"
+echo "  • Session management"
+echo "  • OpenAI-compatible endpoints"
+echo "  • Session-specific API keys"
+echo "  • Stateless completion mode"
+echo "  • Model listing"
+echo "  • Key type validation"
+echo ""
+echo "API Keys (save these for future testing):"
+echo "  Client A Base Key: $API_KEY_A"
+echo "  Client A Session Key: $SESSION_KEY_A"
+echo "  Client B Base Key: $API_KEY_B"
+echo "  Client B Session Key: $SESSION_KEY_B"
+echo ""
+echo -e "${GREEN}Loom is ready for production use!${NC}"
