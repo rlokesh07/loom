@@ -3,7 +3,7 @@
 #include "../include/WebSearchTool.hpp"
 #include "../include/WebFetchTool.hpp"
 #include "../include/GitHubTool.hpp"
-#include "../examples/CalculatorTool.hpp"
+#include "../include/CalculatorTool.hpp"
 
 std::vector<AvailableToolsRegistry::ToolInfo> AvailableToolsRegistry::list_available() {
     return {
