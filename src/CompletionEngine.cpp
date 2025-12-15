@@ -75,15 +75,32 @@ std::string CompletionEngine::parse_completion_response(const std::string& respo
     json response = json::parse(response_str);
     out_full_response = response;
 
-    // Check for errors
+    // Check for errors in error field
     if (response.contains("error")) {
         std::string error_msg = response["error"]["message"].get<std::string>();
+        std::cerr << "OpenAI API Error: " << error_msg << std::endl;
+        std::cerr << "Full response: " << response.dump(2) << std::endl;
         throw std::runtime_error("OpenAI API error: " + error_msg);
     }
 
     // Extract completion
     if (response.contains("choices") && !response["choices"].empty()) {
-        const auto& message = response["choices"][0]["message"];
+        const auto& choice = response["choices"][0];
+
+        // Check for error finish_reason
+        if (choice.contains("finish_reason") && choice["finish_reason"] == "error") {
+            std::string error_msg = "OpenAI returned finish_reason='error'";
+            std::cerr << error_msg << std::endl;
+            std::cerr << "Full response: " << response.dump(2) << std::endl;
+
+            // Try to extract more error details if available
+            if (response.contains("error")) {
+                error_msg += ": " + response["error"]["message"].get<std::string>();
+            }
+            throw std::runtime_error(error_msg);
+        }
+
+        const auto& message = choice["message"];
 
         // Check if content exists and is not null
         if (message.contains("content") && !message["content"].is_null()) {
@@ -97,6 +114,7 @@ std::string CompletionEngine::parse_completion_response(const std::string& respo
         }
     }
 
+    std::cerr << "No completion in response: " << response.dump(2) << std::endl;
     throw std::runtime_error("No completion in response");
 }
 
