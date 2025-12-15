@@ -55,30 +55,39 @@ std::string AuthManager::hash_api_key(const std::string& api_key) {
 std::optional<std::pair<std::string, std::string>> AuthManager::create_client(
     const std::string& display_name
 ) {
-    // Generate new API key
-    std::string api_key = generate_api_key();
-
-    // Hash it for storage
-    std::string api_key_hash = hash_api_key(api_key);
-
-    // Create client in database
-    auto client_id_opt = db_->create_client(api_key_hash, display_name);
+    // Create client in database (no API key in clients table anymore)
+    auto client_id_opt = db_->create_client(display_name);
 
     if (!client_id_opt) {
         return std::nullopt;
     }
 
+    std::string client_id = *client_id_opt;
+
+    // Generate base API key using new api_key_aliases system
+    auto base_key_opt = db_->createBaseApiKey(client_id);
+
+    if (!base_key_opt) {
+        // Client created but key generation failed
+        return std::nullopt;
+    }
+
     // Return both client_id and the plain API key
     // This is the ONLY time the plain API key is returned
-    return std::make_pair(client_id_opt.value(), api_key);
+    return std::make_pair(client_id, *base_key_opt);
 }
 
 std::optional<std::string> AuthManager::authenticate(const std::string& api_key) {
     // Hash the provided API key
     std::string api_key_hash = hash_api_key(api_key);
 
-    // Look up client by hash
-    return db_->authenticate_client(api_key_hash);
+    // Look up in api_key_aliases table
+    auto alias_opt = db_->authenticateApiKey(api_key_hash);
+    if (!alias_opt) {
+        return std::nullopt;
+    }
+
+    return alias_opt->client_id;
 }
 
 std::optional<std::string> AuthManager::extract_api_key(const std::string& auth_header) {

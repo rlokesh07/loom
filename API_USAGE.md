@@ -1,6 +1,6 @@
 # Loom API Usage Guide
 
-**Last Updated**: 2025-01-15 (Updated for multi-tenant authentication)
+**Last Updated**: 2025-12-15 (Updated for OpenAI-compatible endpoints)
 
 **Production URL**: `https://loom-production.up.railway.app`
 
@@ -38,6 +38,284 @@ curl -X POST https://loom-production.up.railway.app/api/sessions/$SESSION/chat \
   -H "Authorization: Bearer $API_KEY" \
   -d '{"message":"Hello! What can you help me with?"}'
 ```
+
+---
+
+## OpenAI-Compatible API
+
+Loom now supports **OpenAI-compatible endpoints**, allowing you to use any OpenAI SDK or client library with Loom's multi-tenant architecture.
+
+### Key Features
+
+- **Session-Specific API Keys**: Each session gets a unique API key (e.g., `sk-session-abc123...`)
+- **OpenAI SDK Compatible**: Works with OpenAI Python SDK, Node.js SDK, or any OpenAI-compatible client
+- **Dual Mode Operation**:
+  - **Session Mode**: Use session keys for stateful conversations with history
+  - **Stateless Mode**: Use base keys for one-off completions without history
+- **30+ Supported Models**: GPT-4, GPT-3.5, Gemini, Llama3, Mistral, and more
+
+### Quick Start with OpenAI Compatibility
+
+```bash
+# 1. Create a client to get your base API key
+BASE_KEY=$(curl -s -X POST https://loom-production.up.railway.app/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"My App"}' | jq -r '.api_key')
+
+echo "Base API Key: $BASE_KEY"
+
+# 2. Create a session to get a session-specific API key
+RESPONSE=$(curl -s -X POST https://loom-production.up.railway.app/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $BASE_KEY" \
+  -d '{"engine":"chatgpt","model":"gpt-3.5-turbo"}')
+
+SESSION_KEY=$(echo $RESPONSE | jq -r '.session_api_key')
+SESSION_ID=$(echo $RESPONSE | jq -r '.session_id')
+
+echo "Session API Key: $SESSION_KEY"
+echo "Session ID: $SESSION_ID"
+
+# 3. Use the session key with OpenAI-compatible endpoint
+curl -X POST https://loom-production.up.railway.app/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SESSION_KEY" \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {"role": "user", "content": "Hello! Tell me a joke."}
+    ]
+  }'
+```
+
+### Using with OpenAI Python SDK
+
+```python
+from openai import OpenAI
+
+# Option 1: Session Mode (stateful, maintains history)
+client = OpenAI(
+    api_key="sk-session-abc123...",  # Use session-specific key
+    base_url="https://loom-production.up.railway.app/v1"
+)
+
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "user", "content": "Hello!"}
+    ]
+)
+
+print(response.choices[0].message.content)
+
+# Continue the conversation - history is maintained
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "user", "content": "What did I just say?"}
+    ]
+)
+
+# Option 2: Stateless Mode (no history, one-off completion)
+client = OpenAI(
+    api_key="sk-abc123...",  # Use base key
+    base_url="https://loom-production.up.railway.app/v1"
+)
+
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "What is 2+2?"}
+    ]
+)
+```
+
+### Using with OpenAI Node.js SDK
+
+```javascript
+const OpenAI = require('openai');
+
+// Session Mode
+const client = new OpenAI({
+  apiKey: 'sk-session-abc123...',
+  baseURL: 'https://loom-production.up.railway.app/v1'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gpt-3.5-turbo',
+  messages: [
+    { role: 'user', content: 'Hello!' }
+  ]
+});
+
+console.log(response.choices[0].message.content);
+```
+
+### OpenAI Endpoints
+
+#### POST /v1/chat/completions
+
+Standard OpenAI chat completions endpoint with dual-mode operation.
+
+**Session Mode** (use session key):
+```bash
+curl -X POST $API_BASE_URL/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-session-abc123..." \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 500
+  }'
+```
+
+**Stateless Mode** (use base key):
+```bash
+curl -X POST $API_BASE_URL/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-abc123..." \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is 2+2?"}
+    ]
+  }'
+```
+
+**Response** (OpenAI-compatible):
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gpt-3.5-turbo",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I assist you today?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}
+```
+
+**Session Mode Behavior**:
+- Conversation history is automatically maintained
+- New messages are intelligently deduplicated (O(1) performance)
+- Each request appends to the session's history
+- Messages persist across requests
+
+**Stateless Mode Behavior**:
+- No history is saved
+- Each request is independent
+- You must include full conversation context in each request
+- Useful for one-off completions or custom history management
+
+#### GET /v1/models
+
+List all available models and their engine mappings.
+
+```bash
+curl $API_BASE_URL/v1/models
+```
+
+Response:
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "openai",
+      "loom_engine": "chatgpt"
+    },
+    {
+      "id": "gpt-4-turbo",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "openai",
+      "loom_engine": "chatgpt"
+    },
+    {
+      "id": "gemini-pro",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "google",
+      "loom_engine": "gemini"
+    }
+  ]
+}
+```
+
+### Session-Specific API Keys
+
+When you create a session, Loom automatically generates a session-specific API key:
+
+```bash
+# Create session with base key
+curl -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-abc123..." \
+  -d '{"engine":"chatgpt","model":"gpt-3.5-turbo"}'
+```
+
+Response:
+```json
+{
+  "session_id": "123e4567-e89b-12d3-a456-426614174000",
+  "session_api_key": "sk-session-abc123def456...",
+  "engine": "chatgpt",
+  "model": "gpt-3.5-turbo",
+  "created_at": "2025-12-15T10:30:00Z"
+}
+```
+
+**Key Types**:
+- **Base Key** (`sk-abc...`): Can create sessions, access all OpenAI endpoints
+- **Session Key** (`sk-session-abc...`): Scoped to specific session, for stateful conversations
+
+**Security**:
+- Session keys cannot create new sessions (403 error)
+- Session keys are automatically scoped to their session
+- Base keys required for session management operations
+
+### Supported Models
+
+**OpenAI (engine: chatgpt)**
+- `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`
+- `gpt-3.5-turbo`, `gpt-3.5-turbo-16k`
+- `o1-preview`, `o1-mini`, `o3-mini`
+
+**Google (engine: gemini)**
+- `gemini-pro`, `gemini-1.5-pro`, `gemini-1.5-flash`
+- `gemini-1.0-pro`, `gemini-2.0-flash-exp`
+
+**Ollama (engine: ollama)**
+- `llama3`, `llama3.1`, `llama3.2`, `llama3:70b`
+- `mistral`, `mixtral:8x7b`, `codellama`, `deepseek-coder`
+- `qwen2.5-coder`, `phi3`, `gemma2`
+
+**Note**: Requires appropriate API keys configured on server:
+- `OPENAI_API_KEY` for ChatGPT models
+- `GEMINI_API_KEY` for Gemini models
+- Ollama running locally for Ollama models
+
+---
 
 ## Authentication
 
@@ -136,6 +414,7 @@ curl -X POST $API_BASE_URL/api/sessions \
 ```json
 {
   "session_id": "sess-abc123",
+  "session_api_key": "sk-session-abc123def456...",
   "engine": "chatgpt",
   "model": "gpt-4o-mini",
   "created_at": "2025-01-15T10:30:00Z"
@@ -143,6 +422,8 @@ curl -X POST $API_BASE_URL/api/sessions \
 ```
 
 Engine options: `chatgpt`, `ollama`, `gemini`
+
+**Note**: The `session_api_key` is automatically generated and can be used with OpenAI-compatible endpoints for this specific session.
 
 #### List Sessions
 
@@ -689,6 +970,15 @@ The stateless version uses these Supabase tables:
 - `tool_names` (TEXT[] array of registered tools)
 - `created_at`, `last_accessed_at` (timestamps)
 
+**api_key_aliases** (for API key management)
+- `id` (SERIAL, primary key)
+- `key_hash` (TEXT, SHA-256 hash of API key, unique)
+- `client_id` (UUID, references clients)
+- `session_id` (UUID, optional, references sessions)
+- `key_type` (TEXT, either 'base' or 'session')
+- `created_at`, `last_used_at` (timestamps)
+- `is_active` (BOOLEAN, for key revocation)
+
 **child_sessions** (for agent-as-tool support)
 - `parent_session_id` (UUID)
 - `tool_name` (TEXT)
@@ -696,11 +986,12 @@ The stateless version uses these Supabase tables:
 
 **clients** (for multi-tenancy authentication)
 - `client_id` (UUID, primary key)
-- `api_key_hash` (SHA-256 hash of API key for secure authentication)
 - `display_name` (optional client name)
 - `credentials_encrypted` (JSONB, encrypted per-client credentials for tools)
 - `max_sessions`, `max_requests_per_hour` (quotas)
 - `created_at`, `last_active_at` (timestamps)
+
+**Note**: The `api_key_hash` column was removed from the `clients` table. All API keys (both base and session-specific) are now stored in the `api_key_aliases` table for better management and scalability.
 
 ### Viewing Data in Supabase
 
@@ -731,7 +1022,7 @@ Go to your Supabase project dashboard:
 
 ### "Database connection failed"
 - Verify `SUPABASE_URL` and `SUPABASE_KEY` are set correctly
-- Check you've applied all migrations in order (001 through 005)
+- Check you've applied all migrations in order (001 through 006)
 - Verify internet connection
 - Check Supabase project is active and not paused
 
@@ -754,7 +1045,8 @@ If you have existing code using the old stateful API, here's what you need to up
 
 ### 1. Set up Supabase
 - Create Supabase project
-- Apply all migrations (001 through 005) **in order**
+- Apply all migrations (001 through 006) **in order**
+  - Migration 006 adds the `api_key_aliases` table for OpenAI-compatible endpoints
 - Set `SUPABASE_URL` and `SUPABASE_KEY` environment variables
 
 ### 2. Add Authentication
@@ -791,7 +1083,92 @@ curl -X POST $API_BASE_URL/api/sessions \
 ### Summary of Changes
 - ✅ All state persists in database (survives restarts)
 - ✅ Horizontally scalable (run multiple instances)
+- ✅ OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/models`)
+- ✅ Session-specific API keys for stateful conversations
+- ✅ Dual-mode operation (session vs stateless)
 - ⚠️ **REQUIRES**: `Authorization: Bearer <api-key>` header on all requests (except health check and client creation)
 - ⚠️ **REQUIRES**: Creating a client first with `POST /api/clients`
 - ✅ Multi-tenant with Row-Level Security
 - ✅ Engine support: chatgpt, ollama, gemini
+- ⚠️ **BREAKING**: The old `/api/sessions/{id}/chat` endpoint is still supported but `/v1/chat/completions` is the recommended OpenAI-compatible alternative
+
+---
+
+## Example: Using OpenAI Python SDK with Loom
+
+This example shows how to use the official OpenAI Python SDK with Loom's OpenAI-compatible endpoints:
+
+```python
+from openai import OpenAI
+import requests
+
+# 1. Create a Loom client and get base API key
+response = requests.post(
+    "https://loom-production.up.railway.app/api/clients",
+    json={"display_name": "My Python App"}
+)
+base_key = response.json()["api_key"]
+print(f"Base API Key: {base_key}")
+print("⚠️ Save this key - it won't be shown again!")
+
+# 2. Create a session to get session-specific API key
+session_response = requests.post(
+    "https://loom-production.up.railway.app/api/sessions",
+    headers={"Authorization": f"Bearer {base_key}"},
+    json={"engine": "chatgpt", "model": "gpt-3.5-turbo"}
+)
+session_data = session_response.json()
+session_key = session_data["session_api_key"]
+session_id = session_data["session_id"]
+
+print(f"Session ID: {session_id}")
+print(f"Session Key: {session_key}")
+
+# 3. Use OpenAI SDK with session key for stateful conversation
+client = OpenAI(
+    api_key=session_key,
+    base_url="https://loom-production.up.railway.app/v1"
+)
+
+# First message
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "user", "content": "My name is Alice. Remember it!"}
+    ]
+)
+print("Assistant:", response.choices[0].message.content)
+
+# Follow-up message - history is maintained automatically
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "user", "content": "What's my name?"}
+    ]
+)
+print("Assistant:", response.choices[0].message.content)
+# Output: "Your name is Alice."
+
+# 4. Alternatively, use base key for stateless mode
+stateless_client = OpenAI(
+    api_key=base_key,
+    base_url="https://loom-production.up.railway.app/v1"
+)
+
+# Stateless completion - no history saved
+response = stateless_client.chat.completions.create(
+    model="gpt-3.5-turbo",
+    messages=[
+        {"role": "system", "content": "You are a math tutor."},
+        {"role": "user", "content": "What is 15 * 7?"}
+    ]
+)
+print("Assistant:", response.choices[0].message.content)
+```
+
+**Key Benefits**:
+- Use familiar OpenAI SDK (no custom client needed)
+- Session keys provide automatic conversation history
+- Base keys for one-off completions without state
+- Multi-tenant isolation built-in
+- Works with any OpenAI-compatible tool or library
