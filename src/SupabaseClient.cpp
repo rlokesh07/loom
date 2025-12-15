@@ -1,4 +1,5 @@
-#include "SupabaseClient.hpp"
+#include "../include/SupabaseClient.hpp"
+#include "../include/AuthManager.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
@@ -461,32 +462,10 @@ bool SupabaseClient::unregisterChildSession(const std::string& parentSessionID, 
 // Multi-Tenancy Authentication Methods
 // ============================================
 
-std::optional<std::string> SupabaseClient::authenticate_client(const std::string& api_key_hash) {
+std::optional<std::string> SupabaseClient::create_client(const std::string& display_name) {
     try {
-        // Query: SELECT client_id FROM clients WHERE api_key_hash = $1
-        std::string query = "api_key_hash=eq." + api_key_hash + "&select=client_id";
-        std::string response = makeRequest("GET", "/rest/v1/clients", json::object(), query);
-
-        json response_json = json::parse(response);
-
-        // Check if we got a result
-        if (response_json.is_array() && !response_json.empty()) {
-            return response_json[0]["client_id"].get<std::string>();
-        }
-
-        return std::nullopt;
-    } catch (const std::exception& e) {
-        std::cerr << "Error authenticating client: " << e.what() << std::endl;
-        return std::nullopt;
-    }
-}
-
-std::optional<std::string> SupabaseClient::create_client(const std::string& api_key_hash,
-                                                           const std::string& display_name) {
-    try {
-        // INSERT INTO clients (api_key_hash, display_name) RETURNING client_id
+        // INSERT INTO clients (display_name) RETURNING client_id
         json body = {
-            {"api_key_hash", api_key_hash},
             {"display_name", display_name}
         };
 
@@ -516,5 +495,157 @@ void SupabaseClient::set_client_context(const std::string& client_id) {
         makeRequest("POST", "/rest/v1/rpc/set_client_context", body);
     } catch (const std::exception& e) {
         std::cerr << "Error setting client context: " << e.what() << std::endl;
+    }
+}
+
+// ============================================
+// Session-Specific API Key Methods
+// ============================================
+
+std::optional<SupabaseClient::ApiKeyAlias> SupabaseClient::authenticateApiKey(
+    const std::string& key_hash
+) {
+    try {
+        std::string query = "key_hash=eq." + key_hash + "&is_active=eq.true&select=*";
+        std::string response = makeRequest("GET", "/rest/v1/api_key_aliases",
+                                          json::object(), query);
+
+        if (!response.empty()) {
+            json response_json = json::parse(response);
+            if (response_json.is_array() && !response_json.empty()) {
+                json row = response_json[0];
+
+                ApiKeyAlias alias;
+                alias.key_hash = row["key_hash"];
+                alias.client_id = row["client_id"];
+                alias.key_type = row["key_type"];
+                alias.is_active = row["is_active"];
+
+                if (!row["session_id"].is_null()) {
+                    alias.session_id = row["session_id"];
+                }
+
+                return alias;
+            }
+        }
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "Error authenticating API key: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+std::optional<std::string> SupabaseClient::createBaseApiKey(
+    const std::string& client_id
+) {
+    try {
+        // Generate base key using AuthManager
+        std::string base_key = AuthManager::generate_api_key();
+        std::string key_hash = AuthManager::hash_api_key(base_key);
+
+        json body = {
+            {"key_hash", key_hash},
+            {"client_id", client_id},
+            {"key_type", "base"}
+        };
+
+        std::string response = makeRequest("POST", "/rest/v1/api_key_aliases", body);
+
+        if (!response.empty()) {
+            json response_json = json::parse(response);
+            if (response_json.is_array() && !response_json.empty()) {
+                return base_key;  // Return unhashed key
+            }
+        }
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating base API key: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+std::optional<std::string> SupabaseClient::createSessionApiKey(
+    const std::string& client_id,
+    const std::string& session_id
+) {
+    try {
+        // Generate session key with distinctive prefix
+        std::string random_part = AuthManager::generate_api_key().substr(3);  // Remove "sk-"
+        std::string session_key = "sk-session-" + random_part;
+        std::string key_hash = AuthManager::hash_api_key(session_key);
+
+        json body = {
+            {"key_hash", key_hash},
+            {"client_id", client_id},
+            {"session_id", session_id},
+            {"key_type", "session"}
+        };
+
+        std::string response = makeRequest("POST", "/rest/v1/api_key_aliases", body);
+
+        if (!response.empty()) {
+            json response_json = json::parse(response);
+            if (response_json.is_array() && !response_json.empty()) {
+                return session_key;  // Return unhashed key
+            }
+        }
+
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        std::cerr << "Error creating session API key: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+std::vector<SupabaseClient::ApiKeyAlias> SupabaseClient::listClientApiKeys(
+    const std::string& client_id
+) {
+    std::vector<ApiKeyAlias> keys;
+
+    try {
+        std::string query = "client_id=eq." + client_id + "&select=*&order=created_at.desc";
+        std::string response = makeRequest("GET", "/rest/v1/api_key_aliases",
+                                          json::object(), query);
+
+        if (!response.empty()) {
+            json response_json = json::parse(response);
+            if (response_json.is_array()) {
+                for (const auto& row : response_json) {
+                    ApiKeyAlias alias;
+                    alias.key_hash = row["key_hash"];
+                    alias.client_id = row["client_id"];
+                    alias.key_type = row["key_type"];
+                    alias.is_active = row["is_active"];
+
+                    if (!row["session_id"].is_null()) {
+                        alias.session_id = row["session_id"];
+                    }
+
+                    keys.push_back(alias);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error listing API keys: " << e.what() << std::endl;
+    }
+
+    return keys;
+}
+
+bool SupabaseClient::revokeApiKey(
+    const std::string& key_hash,
+    const std::string& client_id
+) {
+    try {
+        json update_body = {{"is_active", false}};
+        std::string query = "key_hash=eq." + key_hash + "&client_id=eq." + client_id;
+
+        makeRequest("PATCH", "/rest/v1/api_key_aliases", update_body, query);
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error revoking API key: " << e.what() << std::endl;
+        return false;
     }
 }

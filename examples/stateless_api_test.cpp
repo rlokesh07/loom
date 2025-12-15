@@ -6,12 +6,26 @@
 using json = nlohmann::json;
 
 /**
- * Multi-Tenancy Test Suite for Stateless API Server
+ * Multi-Tenancy & OpenAI Compatibility Test Suite for Stateless API Server
  *
  * Prerequisites:
  * - API server must be running (./loom_api_stateless)
  * - SUPABASE_URL and SUPABASE_KEY must be set
- * - Migrations 004 and 005 must be applied
+ * - Migration 006 (session_api_keys) must be applied
+ *
+ * Tests:
+ * 0. Health Check
+ * 1. Create Client (base API key generation)
+ * 2. No Auth Access (should fail)
+ * 3. Create Session with Auth (returns session-specific API key)
+ * 4. Get Client Info
+ * 5. Tenant Isolation
+ * 6. Own Session Access
+ * 7. List Sessions
+ * 8. OpenAI Chat Completion with Session Key
+ * 9. OpenAI Chat Completion with Base Key (Stateless)
+ * 10. List Available Models (/v1/models)
+ * 11. Session Key Cannot Create New Sessions
  */
 
 const std::string API_HOST = "localhost";
@@ -77,7 +91,7 @@ std::string test_create_client(const std::string& client_name) {
         return "";
     }
 
-    if (res->status != 200) {
+    if (res->status != 201) {
         print_error("Client creation failed with status: " + std::to_string(res->status));
         std::cout << "Response: " << res->body << std::endl;
         return "";
@@ -132,7 +146,7 @@ bool test_no_auth() {
 }
 
 // Test 3: Create Session WITH Valid Auth (Should Succeed)
-std::string test_create_session_with_auth(const std::string& api_key, const std::string& client_name) {
+std::pair<std::string, std::string> test_create_session_with_auth(const std::string& api_key, const std::string& client_name) {
     print_test_header("Test 3: Create Session With Auth - " + client_name);
 
     httplib::Client client(API_HOST, API_PORT);
@@ -150,23 +164,25 @@ std::string test_create_session_with_auth(const std::string& api_key, const std:
 
     if (!res) {
         print_error("Failed to connect to server");
-        return "";
+        return {"", ""};
     }
 
-    if (res->status != 200) {
+    if (res->status != 201) {
         print_error("Session creation failed with status: " + std::to_string(res->status));
         std::cout << "Response: " << res->body << std::endl;
-        return "";
+        return {"", ""};
     }
 
     json response = json::parse(res->body);
     std::string session_id = response["session_id"];
+    std::string session_api_key = response["session_api_key"];
 
     print_success("Session created: " + session_id);
+    print_success("Session API Key: " + session_api_key);
     print_success("Engine: " + response["engine"].get<std::string>());
     print_success("Model: " + response["model"].get<std::string>());
 
-    return session_id;
+    return {session_id, session_api_key};
 }
 
 // Test 4: Get Client Info
@@ -289,12 +305,174 @@ bool test_list_sessions(const std::string& api_key, const std::string& client_na
     return true;
 }
 
+// Test 8: OpenAI Chat Completion with Session Key
+bool test_openai_chat_completion_session(const std::string& session_api_key) {
+    print_test_header("Test 8: OpenAI Chat Completion (Session Key)");
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    json request = {
+        {"model", "gpt-3.5-turbo"},
+        {"messages", json::array({
+            {{"role", "user"}, {"content", "Say 'Hello from Loom!'"}}
+        })}
+    };
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + session_api_key}
+    };
+
+    auto res = client.Post("/v1/chat/completions", headers, request.dump(), "application/json");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 200) {
+        print_error("Chat completion failed with status: " + std::to_string(res->status));
+        std::cout << "Response: " << res->body << std::endl;
+        return false;
+    }
+
+    json response = json::parse(res->body);
+
+    if (!response.contains("choices") || response["choices"].empty()) {
+        print_error("Response missing choices");
+        return false;
+    }
+
+    std::string message = response["choices"][0]["message"]["content"];
+    print_success("Got response: " + message.substr(0, 50) + (message.length() > 50 ? "..." : ""));
+    print_success("Chat completion ID: " + response["id"].get<std::string>());
+
+    return true;
+}
+
+// Test 9: OpenAI Chat Completion with Base Key (Stateless)
+bool test_openai_chat_completion_stateless(const std::string& base_api_key) {
+    print_test_header("Test 9: OpenAI Chat Completion (Base Key - Stateless)");
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    json request = {
+        {"model", "gpt-3.5-turbo"},
+        {"messages", json::array({
+            {{"role", "system"}, {"content", "You are a helpful assistant"}},
+            {{"role", "user"}, {"content", "What is 2+2?"}}
+        })}
+    };
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + base_api_key}
+    };
+
+    auto res = client.Post("/v1/chat/completions", headers, request.dump(), "application/json");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 200) {
+        print_error("Stateless chat completion failed with status: " + std::to_string(res->status));
+        std::cout << "Response: " << res->body << std::endl;
+        return false;
+    }
+
+    json response = json::parse(res->body);
+
+    if (!response.contains("choices") || response["choices"].empty()) {
+        print_error("Response missing choices");
+        return false;
+    }
+
+    std::string message = response["choices"][0]["message"]["content"];
+    print_success("Got response: " + message.substr(0, 50) + (message.length() > 50 ? "..." : ""));
+    print_success("Stateless mode working correctly");
+
+    return true;
+}
+
+// Test 10: List Available Models
+bool test_list_models() {
+    print_test_header("Test 10: List Available Models");
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    auto res = client.Get("/v1/models");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 200) {
+        print_error("List models failed with status: " + std::to_string(res->status));
+        return false;
+    }
+
+    json response = json::parse(res->body);
+
+    if (!response.contains("data") || !response["data"].is_array()) {
+        print_error("Response missing data array");
+        return false;
+    }
+
+    int model_count = response["data"].size();
+    print_success("Found " + std::to_string(model_count) + " available models");
+
+    // Show first few models
+    for (int i = 0; i < std::min(5, model_count); i++) {
+        std::string model_id = response["data"][i]["id"];
+        std::string owned_by = response["data"][i]["owned_by"];
+        print_success("  - " + model_id + " (engine: " + owned_by + ")");
+    }
+
+    return true;
+}
+
+// Test 11: Session Key Cannot Create New Sessions
+bool test_session_key_cannot_create_session(const std::string& session_api_key) {
+    print_test_header("Test 11: Session Key Cannot Create Sessions");
+
+    httplib::Client client(API_HOST, API_PORT);
+
+    json request = {
+        {"engine", "chatgpt"},
+        {"model", "gpt-3.5-turbo"}
+    };
+
+    httplib::Headers headers = {
+        {"Authorization", "Bearer " + session_api_key}
+    };
+
+    auto res = client.Post("/api/sessions", headers, request.dump(), "application/json");
+
+    if (!res) {
+        print_error("Failed to connect to server");
+        return false;
+    }
+
+    if (res->status != 400) {
+        print_error("Expected 400 Bad Request, got: " + std::to_string(res->status));
+        return false;
+    }
+
+    json response = json::parse(res->body);
+    print_success("Correctly rejected: " + response["error"]["message"].get<std::string>());
+
+    return true;
+}
+
 int main() {
     std::cout << R"(
 ╔════════════════════════════════════════════════════════╗
-║   Multi-Tenancy Test Suite for Loom API Server        ║
+║   Loom API Server - Comprehensive Test Suite          ║
 ║                                                        ║
-║   Testing authentication and tenant isolation          ║
+║   • Multi-Tenancy & Authentication                     ║
+║   • OpenAI-Compatible Endpoints                        ║
+║   • Session-Specific API Keys                          ║
 ╚════════════════════════════════════════════════════════╝
 )" << std::endl;
 
@@ -318,7 +496,7 @@ int main() {
     if (test_no_auth()) passed++; else failed++;
 
     // Test 3: Create Session with Client A
-    std::string session_id_a = test_create_session_with_auth(api_key_a, "Client A");
+    auto [session_id_a, session_key_a] = test_create_session_with_auth(api_key_a, "Client A");
     if (!session_id_a.empty()) {
         passed++;
     } else {
@@ -338,7 +516,7 @@ int main() {
     }
 
     // Create Session with Client B
-    std::string session_id_b = test_create_session_with_auth(api_key_b, "Client B");
+    auto [session_id_b, session_key_b] = test_create_session_with_auth(api_key_b, "Client B");
     if (!session_id_b.empty()) {
         passed++;
     } else {
@@ -367,6 +545,33 @@ int main() {
     }
     if (!api_key_b.empty()) {
         if (test_list_sessions(api_key_b, "Client B")) passed++; else failed++;
+    }
+
+    // Test 8: OpenAI Chat Completion with Session Key
+    if (!session_key_a.empty()) {
+        if (test_openai_chat_completion_session(session_key_a)) passed++; else failed++;
+    } else {
+        std::cout << "\nSkipping OpenAI session test" << std::endl;
+        failed++;
+    }
+
+    // Test 9: OpenAI Chat Completion with Base Key (Stateless)
+    if (!api_key_a.empty()) {
+        if (test_openai_chat_completion_stateless(api_key_a)) passed++; else failed++;
+    } else {
+        std::cout << "\nSkipping OpenAI stateless test" << std::endl;
+        failed++;
+    }
+
+    // Test 10: List Available Models
+    if (test_list_models()) passed++; else failed++;
+
+    // Test 11: Session Key Cannot Create New Sessions
+    if (!session_key_a.empty()) {
+        if (test_session_key_cannot_create_session(session_key_a)) passed++; else failed++;
+    } else {
+        std::cout << "\nSkipping session key validation test" << std::endl;
+        failed++;
     }
 
     // Print Summary

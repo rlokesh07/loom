@@ -8,13 +8,15 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <random>
 
 using json = nlohmann::json;
 
 // Authentication macro for cleaner endpoint code
 #define REQUIRE_AUTH() \
     std::string client_id; \
-    if (!authenticate_request(req, res, client_id)) return;
+    std::optional<std::string> session_id; \
+    if (!authenticate_request(req, res, client_id, session_id)) return;
 
 // Helper to format timestamp as ISO 8601
 std::string format_timestamp(const std::chrono::time_point<std::chrono::system_clock>& tp) {
@@ -70,51 +72,57 @@ std::shared_ptr<CompletionEngine> ApiServer::create_engine(const std::string& en
 
 bool ApiServer::authenticate_request(const httplib::Request& req,
                                       httplib::Response& res,
-                                      std::string& client_id_out) {
+                                      std::string& client_id_out,
+                                      std::optional<std::string>& session_id_out) {
     // 1. Get Authorization header
-    auto auth_header = req.get_header_value("Authorization");
-    if (auth_header.empty()) {
+    if (!req.has_header("Authorization")) {
         res.status = 401;
         json error = {
             {"error", {
                 {"code", "MISSING_AUTH"},
-                {"message", "Authorization header required"}
+                {"message", "Missing Authorization header"}
             }}
         };
         res.set_content(error.dump(), "application/json");
         return false;
     }
 
-    // 2. Extract API key ("Bearer sk-xxx")
-    auto api_key_opt = AuthManager::extract_api_key(auth_header);
-    if (!api_key_opt) {
+    std::string auth_header = req.get_header_value("Authorization");
+    if (auth_header.find("Bearer ") != 0) {
         res.status = 401;
         json error = {
             {"error", {
                 {"code", "INVALID_AUTH_FORMAT"},
-                {"message", "Authorization format must be: Bearer <api-key>"}
+                {"message", "Authorization must be 'Bearer {api_key}'"}
             }}
         };
         res.set_content(error.dump(), "application/json");
         return false;
     }
 
-    // 3. Authenticate and get client_id
-    auto client_id_opt = auth_->authenticate(api_key_opt.value());
-    if (!client_id_opt) {
+    // 2. Extract and hash API key
+    std::string api_key = auth_header.substr(7);  // Remove "Bearer "
+    std::string key_hash = AuthManager::hash_api_key(api_key);
+
+    // 3. Look up in api_key_aliases table (only authentication method)
+    auto alias_opt = db_->authenticateApiKey(key_hash);
+    if (!alias_opt) {
         res.status = 401;
         json error = {
             {"error", {
                 {"code", "INVALID_API_KEY"},
-                {"message", "Invalid or expired API key"}
+                {"message", "Invalid or inactive API key"}
             }}
         };
         res.set_content(error.dump(), "application/json");
         return false;
     }
 
+    auto alias = *alias_opt;
+    client_id_out = alias.client_id;
+    session_id_out = alias.session_id;
+
     // 4. Set RLS context for this request
-    client_id_out = client_id_opt.value();
     db_->set_client_context(client_id_out);
 
     return true;
@@ -132,11 +140,12 @@ void ApiServer::configure_routes() {
             json body = json::parse(req.body);
             std::string display_name = body.value("display_name", "");
 
-            auto result = auth_->create_client(display_name);
-            if (!result) {
+            // Create client (no API key yet)
+            auto client_id_opt = db_->create_client(display_name);
+            if (!client_id_opt) {
                 json error = {
                     {"error", {
-                        {"code", "CLIENT_CREATION_FAILED"},
+                        {"code", "INTERNAL_ERROR"},
                         {"message", "Failed to create client"}
                     }}
                 };
@@ -145,12 +154,30 @@ void ApiServer::configure_routes() {
                 return;
             }
 
-            auto [client_id, api_key] = result.value();
+            std::string client_id = *client_id_opt;
+
+            // Generate base API key
+            auto base_key_opt = db_->createBaseApiKey(client_id);
+            if (!base_key_opt) {
+                // Client created but key generation failed - orphaned client
+                // Could delete client here or just error
+                json error = {
+                    {"error", {
+                        {"code", "INTERNAL_ERROR"},
+                        {"message", "Failed to generate API key"}
+                    }}
+                };
+                res.status = 500;
+                res.set_content(error.dump(), "application/json");
+                return;
+            }
+
             json response = {
                 {"client_id", client_id},
-                {"api_key", api_key},
+                {"api_key", *base_key_opt},
                 {"message", "Save this API key - it won't be shown again"}
             };
+            res.status = 201;
             res.set_content(response.dump(), "application/json");
         } catch (const std::exception& e) {
             json error = {
@@ -177,6 +204,20 @@ void ApiServer::configure_routes() {
     // POST /api/sessions - Create new session
     server_.Post("/api/sessions", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
+
+        // Validate that they're using a base key, not a session key
+        if (session_id.has_value()) {
+            json error = {
+                {"error", {
+                    {"code", "INVALID_REQUEST"},
+                    {"message", "Cannot create session with session key. Use base key."}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
         try {
             json body = json::parse(req.body);
 
@@ -185,13 +226,13 @@ void ApiServer::configure_routes() {
             std::string system_prompt = body.value("system_prompt", "");
 
             // Create session in database
-            auto session_id_opt = db_->createSession(engine, model, client_id, system_prompt);
+            auto new_session_id_opt = db_->createSession(engine, model, client_id, system_prompt);
 
-            if (!session_id_opt) {
+            if (!new_session_id_opt) {
                 json error = {
                     {"error", {
-                        {"code", "SESSION_CREATION_FAILED"},
-                        {"message", "Failed to create session in database"}
+                        {"code", "INTERNAL_ERROR"},
+                        {"message", "Failed to create session"}
                     }}
                 };
                 res.status = 500;
@@ -199,32 +240,35 @@ void ApiServer::configure_routes() {
                 return;
             }
 
-            std::string session_id = session_id_opt.value();
+            std::string new_session_id = *new_session_id_opt;
 
-            // Load session metadata to return details
-            auto session_opt = db_->getSession(session_id, client_id);
-            if (!session_opt) {
+            // Generate session-specific API key
+            auto session_key_opt = db_->createSessionApiKey(client_id, new_session_id);
+            if (!session_key_opt) {
+                // Session created but key generation failed
+                // Delete the session to avoid orphans
+                db_->deleteSession(new_session_id, client_id);
                 json error = {
                     {"error", {
-                        {"code", "SESSION_NOT_FOUND"},
-                        {"message", "Session created but could not be retrieved"}
+                        {"code", "INTERNAL_ERROR"},
+                        {"message", "Failed to generate session API key"}
                     }}
                 };
                 res.status = 500;
                 res.set_content(error.dump(), "application/json");
                 return;
             }
-
-            auto session = session_opt.value();
 
             json response = {
-                {"session_id", session.id},
-                {"engine", session.engine_type},
-                {"model", session.model},
-                {"system_prompt", session.system_prompt},
-                {"created_at", format_timestamp(session.created_at)}
+                {"session_id", new_session_id},
+                {"session_api_key", *session_key_opt},
+                {"engine", engine},
+                {"model", model},
+                {"system_prompt", system_prompt},
+                {"created_at", format_timestamp(std::chrono::system_clock::now())}
             };
 
+            res.status = 201;
             res.set_content(response.dump(), "application/json");
 
         } catch (const std::invalid_argument& e) {
@@ -276,15 +320,15 @@ void ApiServer::configure_routes() {
     // GET /api/sessions/:id - Get session details
     server_.Get(R"(/api/sessions/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
 
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
 
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -293,7 +337,7 @@ void ApiServer::configure_routes() {
         }
 
         auto session = session_opt.value();
-        auto history = db_->getConversationHistory(session_id, client_id);
+        auto history = db_->getConversationHistory(requested_session_id, client_id);
 
         json response = {
             {"session_id", session.id},
@@ -311,14 +355,14 @@ void ApiServer::configure_routes() {
     // DELETE /api/sessions/:id - Delete session
     server_.Delete(R"(/api/sessions/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
-        bool destroyed = db_->deleteSession(session_id, client_id);
+        std::string requested_session_id = req.matches[1];
+        bool destroyed = db_->deleteSession(requested_session_id, client_id);
 
         if (!destroyed) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -334,137 +378,27 @@ void ApiServer::configure_routes() {
         res.set_content(response.dump(), "application/json");
     });
 
-    // POST /api/sessions/:id/chat - Send message (KEY STATELESS ENDPOINT)
-    server_.Post(R"(/api/sessions/([^/]+)/chat)", [this](const httplib::Request& req, httplib::Response& res) {
-        REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+    // OpenAI-compatible endpoints
+    server_.Post("/v1/chat/completions", [this](const httplib::Request& req, httplib::Response& res) {
+        handle_chat_completion(req, res);
+    });
 
-        try {
-            // 1. Load session metadata from database
-            auto session_opt = db_->getSession(session_id, client_id);
-            if (!session_opt) {
-                json error = {
-                    {"error", {
-                        {"code", "SESSION_NOT_FOUND"},
-                        {"message", "Session with ID '" + session_id + "' not found"}
-                    }}
-                };
-                res.status = 404;
-                res.set_content(error.dump(), "application/json");
-                return;
-            }
-            auto session = session_opt.value();
-
-            // 2. Load conversation history from database
-            auto history = db_->getConversationHistory(session_id, client_id);
-
-            // 3. Load tool names from database
-            auto tool_names = db_->getSessionTools(session_id, client_id);
-
-            // 4. Build tool registry from names
-            auto registry = build_tool_registry(tool_names);
-
-            // 5. Create completion engine
-            auto engine = create_engine(session.engine_type);
-
-            // 6. Create FRESH agent (stateless!)
-            Agent agent(engine, session.model, false);
-            agent.set_tool_registry(registry);
-
-            // 7. Load history into agent
-            for (const auto& msg : history) {
-                agent.add_message(msg.role, msg.content);
-            }
-
-            // 8. Add system prompt if exists
-            if (!session.system_prompt.empty() && history.empty()) {
-                agent.add_message("system", session.system_prompt);
-            }
-
-            // 9. Parse request
-            json body = json::parse(req.body);
-            std::string user_message = body.at("message");
-
-            std::map<std::string, std::any> params;
-            params["message"] = user_message;
-
-            if (body.contains("temperature")) {
-                params["temperature"] = body["temperature"].get<double>();
-            }
-            if (body.contains("max_tokens")) {
-                params["max_tokens"] = body["max_tokens"].get<int>();
-            }
-
-            // 10. Execute agent
-            auto result = agent.execute_safe(params);
-
-            // 11. Save new messages to database
-            db_->add_message(session_id, client_id, "user", user_message);
-            if (result.is_success()) {
-                std::string assistant_response = result.get_message();
-                db_->add_message(session_id, client_id, "assistant", assistant_response);
-            }
-
-            // 12. Build response
-            json response = {
-                {"success", result.is_success()},
-                {"message", result.get_message()}
-            };
-
-            if (!result.is_success() && result.get_error()) {
-                response["error"] = *result.get_error();
-            }
-
-            // Include tool calls if any were made
-            const auto& tool_calls = agent.get_last_tool_calls();
-            if (!tool_calls.empty()) {
-                json tool_calls_json = json::array();
-                for (const auto& tc : tool_calls) {
-                    tool_calls_json.push_back({
-                        {"tool_name", tc.tool_name},
-                        {"arguments", json::parse(tc.arguments)},
-                        {"result", tc.result},
-                        {"success", tc.success}
-                    });
-                }
-                response["tool_calls"] = tool_calls_json;
-            }
-
-            res.set_content(response.dump(), "application/json");
-
-        } catch (const json::exception& e) {
-            json error = {
-                {"error", {
-                    {"code", "INVALID_REQUEST"},
-                    {"message", e.what()}
-                }}
-            };
-            res.status = 400;
-            res.set_content(error.dump(), "application/json");
-        } catch (const std::exception& e) {
-            json error = {
-                {"error", {
-                    {"code", "INTERNAL_ERROR"},
-                    {"message", e.what()}
-                }}
-            };
-            res.status = 500;
-            res.set_content(error.dump(), "application/json");
-        }
+    server_.Get("/v1/models", [this](const httplib::Request& req, httplib::Response& res) {
+        handle_list_models(req, res);
     });
 
     // GET /api/sessions/:id/history - Get conversation history
     server_.Get(R"(/api/sessions/([^/]+)/history)", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -473,7 +407,7 @@ void ApiServer::configure_routes() {
         }
 
         // Load history from database
-        auto history = db_->getConversationHistory(session_id, client_id);
+        auto history = db_->getConversationHistory(requested_session_id, client_id);
         json messages = json::array();
 
         for (const auto& msg : history) {
@@ -491,7 +425,7 @@ void ApiServer::configure_routes() {
         }
 
         json response = {
-            {"session_id", session_id},
+            {"session_id", requested_session_id},
             {"message_count", history.size()},
             {"messages", messages}
         };
@@ -502,15 +436,15 @@ void ApiServer::configure_routes() {
     // DELETE /api/sessions/:id/history - Clear conversation history
     server_.Delete(R"(/api/sessions/([^/]+)/history)", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -519,7 +453,7 @@ void ApiServer::configure_routes() {
         }
 
         // Clear history in database
-        db_->clearHistory(session_id, client_id);
+        db_->clearHistory(requested_session_id, client_id);
 
         json response = {
             {"success", true},
@@ -546,15 +480,15 @@ void ApiServer::configure_routes() {
     // GET /api/sessions/:id/tools - List tools registered to session
     server_.Get(R"(/api/sessions/([^/]+)/tools)", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -563,7 +497,7 @@ void ApiServer::configure_routes() {
         }
 
         // Load tool names from database
-        auto tool_names = db_->getSessionTools(session_id, client_id);
+        auto tool_names = db_->getSessionTools(requested_session_id, client_id);
         json tools = json::array();
 
         for (const auto& name : tool_names) {
@@ -583,7 +517,7 @@ void ApiServer::configure_routes() {
         }
 
         json response = {
-            {"session_id", session_id},
+            {"session_id", requested_session_id},
             {"tools", tools},
             {"tool_count", tools.size()}
         };
@@ -594,15 +528,15 @@ void ApiServer::configure_routes() {
     // POST /api/sessions/:id/tools - Register tools to session
     server_.Post(R"(/api/sessions/([^/]+)/tools)", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -627,11 +561,11 @@ void ApiServer::configure_routes() {
 
             // Register tools in database
             if (!registered.empty()) {
-                db_->registerTools(session_id, client_id, registered);
+                db_->registerTools(requested_session_id, client_id, registered);
             }
 
             json response = {
-                {"session_id", session_id},
+                {"session_id", requested_session_id},
                 {"registered_tools", registered},
                 {"tool_count", registered.size()}
             };
@@ -666,16 +600,16 @@ void ApiServer::configure_routes() {
     // DELETE /api/sessions/:id/tools/:name - Unregister tool from session
     server_.Delete(R"(/api/sessions/([^/]+)/tools/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
         REQUIRE_AUTH();
-        std::string session_id = req.matches[1];
+        std::string requested_session_id = req.matches[1];
         std::string tool_name = req.matches[2];
 
         // Verify session exists
-        auto session_opt = db_->getSession(session_id, client_id);
+        auto session_opt = db_->getSession(requested_session_id, client_id);
         if (!session_opt) {
             json error = {
                 {"error", {
                     {"code", "SESSION_NOT_FOUND"},
-                    {"message", "Session with ID '" + session_id + "' not found"}
+                    {"message", "Session with ID '" + requested_session_id + "' not found"}
                 }}
             };
             res.status = 404;
@@ -684,16 +618,345 @@ void ApiServer::configure_routes() {
         }
 
         // Unregister from database
-        db_->unregisterTools(session_id, client_id, {tool_name});
+        db_->unregisterTools(requested_session_id, client_id, {tool_name});
 
         json response = {
-            {"session_id", session_id},
+            {"session_id", requested_session_id},
             {"removed_tool", tool_name},
             {"success", true}
         };
 
         res.set_content(response.dump(), "application/json");
     });
+}
+
+// ============================================
+// OpenAI-Compatible Endpoints
+// ============================================
+
+// Exact model lookup table
+const std::unordered_map<std::string, std::string> ApiServer::MODEL_ENGINE_MAP = {
+    // OpenAI models
+    {"gpt-4", "chatgpt"},
+    {"gpt-4-turbo", "chatgpt"},
+    {"gpt-4-turbo-preview", "chatgpt"},
+    {"gpt-4o", "chatgpt"},
+    {"gpt-4o-mini", "chatgpt"},
+    {"gpt-3.5-turbo", "chatgpt"},
+    {"gpt-3.5-turbo-16k", "chatgpt"},
+    {"o1-preview", "chatgpt"},
+    {"o1-mini", "chatgpt"},
+
+    // Gemini models
+    {"gemini-pro", "gemini"},
+    {"gemini-1.5-pro", "gemini"},
+    {"gemini-1.5-flash", "gemini"},
+    {"gemini-ultra", "gemini"},
+
+    // Ollama models (common ones)
+    {"llama3", "ollama"},
+    {"llama3:8b", "ollama"},
+    {"llama3:70b", "ollama"},
+    {"llama2", "ollama"},
+    {"llama2:7b", "ollama"},
+    {"llama2:13b", "ollama"},
+    {"mistral", "ollama"},
+    {"mistral:7b", "ollama"},
+    {"mixtral", "ollama"},
+    {"mixtral:8x7b", "ollama"},
+    {"phi", "ollama"},
+    {"phi:2.7b", "ollama"},
+    {"codellama", "ollama"},
+    {"codellama:7b", "ollama"},
+    {"codellama:13b", "ollama"},
+    {"qwen", "ollama"},
+    {"qwen:7b", "ollama"}
+};
+
+std::string ApiServer::infer_engine_from_model(const std::string& model) {
+    // Exact match lookup
+    auto it = MODEL_ENGINE_MAP.find(model);
+
+    if (it != MODEL_ENGINE_MAP.end()) {
+        return it->second;
+    }
+
+    // Model not found - return helpful error
+    throw std::invalid_argument(
+        "Unknown model: '" + model + "'. " +
+        "Supported models: gpt-4, gpt-4-turbo, gpt-3.5-turbo, o1-preview, " +
+        "gemini-pro, gemini-1.5-pro, llama3, mistral, phi, codellama, etc. " +
+        "See /v1/models endpoint for full list."
+    );
+}
+
+std::string ApiServer::generate_random_id() {
+    static const char chars[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 61);
+
+    std::string id;
+    for (int i = 0; i < 29; i++) {
+        id += chars[dis(gen)];
+    }
+    return id;
+}
+
+json ApiServer::build_openai_response(const ToolResult& result, const std::string& model) {
+    return {
+        {"id", "chatcmpl-" + generate_random_id()},
+        {"object", "chat.completion"},
+        {"created", std::time(nullptr)},
+        {"model", model},
+        {"choices", json::array({
+            {
+                {"index", 0},
+                {"message", {
+                    {"role", "assistant"},
+                    {"content", result.get_message()}
+                }},
+                {"finish_reason", result.is_success() ? "stop" : "error"}
+            }
+        })},
+        {"usage", {
+            {"prompt_tokens", 0},
+            {"completion_tokens", 0},
+            {"total_tokens", 0}
+        }}
+    };
+}
+
+void ApiServer::handle_chat_completion(const httplib::Request& req, httplib::Response& res) {
+    // Authenticate
+    std::string client_id;
+    std::optional<std::string> session_id;
+    if (!authenticate_request(req, res, client_id, session_id)) {
+        return;
+    }
+
+    // Parse request
+    json request_body;
+    try {
+        request_body = json::parse(req.body);
+    } catch (const json::exception& e) {
+        json error = {
+            {"error", {
+                {"code", "INVALID_REQUEST"},
+                {"message", "Invalid JSON"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    if (!request_body.contains("model") || !request_body.contains("messages")) {
+        json error = {
+            {"error", {
+                {"code", "INVALID_REQUEST"},
+                {"message", "Missing required fields: model, messages"}
+            }}
+        };
+        res.status = 400;
+        res.set_content(error.dump(), "application/json");
+        return;
+    }
+
+    // Route based on key type
+    if (session_id.has_value()) {
+        // Session key: use session history
+        handle_session_completion(res, client_id, *session_id, request_body);
+    } else {
+        // Base key: stateless
+        handle_stateless_completion(res, client_id, request_body);
+    }
+}
+
+void ApiServer::handle_session_completion(
+    httplib::Response& res,
+    const std::string& client_id,
+    const std::string& session_id,
+    const json& request_body
+) {
+    try {
+        // Load session
+        auto session_opt = db_->getSession(session_id, client_id);
+        if (!session_opt) {
+            json error = {
+                {"error", {
+                    {"code", "SESSION_NOT_FOUND"},
+                    {"message", "Session not found"}
+                }}
+            };
+            res.status = 404;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+        auto session = *session_opt;
+
+        // Load history
+        auto history = db_->getConversationHistory(session_id, client_id);
+
+        // Create agent
+        auto engine = create_engine(session.engine_type);
+        Agent agent(engine, session.model, false);
+
+        // Set system prompt if exists
+        if (!session.system_prompt.empty()) {
+            agent.add_message("system", session.system_prompt);
+        }
+
+        // Load existing messages
+        for (const auto& msg : history) {
+            agent.add_message(msg.role, msg.content);
+        }
+
+        // Smart deduplication - only check tail of history
+        size_t history_size = history.size();
+        auto request_messages = request_body["messages"];
+        size_t request_size = request_messages.size();
+
+        std::vector<ChatMessage> new_messages;
+
+        // If request has more messages than history, new ones are at the end
+        if (request_size > history_size) {
+            for (size_t i = history_size; i < request_size; i++) {
+                std::string role = request_messages[i]["role"];
+                std::string content = request_messages[i]["content"];
+
+                agent.add_message(role, content);
+                new_messages.push_back(ChatMessage(role, content));
+            }
+        }
+
+        // Execute
+        std::map<std::string, std::any> params;
+        if (request_body.contains("temperature")) {
+            params["temperature"] = request_body["temperature"].get<double>();
+        } else {
+            params["temperature"] = 1.0;
+        }
+        if (request_body.contains("max_tokens")) {
+            params["max_tokens"] = request_body["max_tokens"].get<int>();
+        } else {
+            params["max_tokens"] = -1;
+        }
+
+        auto result = agent.execute_safe(params);
+
+        // Save new messages
+        for (const auto& msg : new_messages) {
+            db_->add_message(session_id, client_id, msg.role, msg.content);
+        }
+
+        // Save assistant response
+        if (result.is_success()) {
+            db_->add_message(session_id, client_id, "assistant", result.get_message());
+        }
+
+        // Build OpenAI response
+        json openai_response = build_openai_response(result, session.model);
+
+        res.set_content(openai_response.dump(), "application/json");
+        res.status = 200;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"code", "INTERNAL_ERROR"},
+                {"message", std::string("Error processing chat completion: ") + e.what()}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
+}
+
+void ApiServer::handle_stateless_completion(
+    httplib::Response& res,
+    const std::string& client_id,
+    const json& request_body
+) {
+    try {
+        std::string model = request_body["model"];
+
+        // Validate model and infer engine
+        std::string engine_type;
+        try {
+            engine_type = infer_engine_from_model(model);
+        } catch (const std::invalid_argument& e) {
+            json error = {
+                {"error", {
+                    {"code", "INVALID_MODEL"},
+                    {"message", e.what()}
+                }}
+            };
+            res.status = 400;
+            res.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        // Create agent
+        auto engine = create_engine(engine_type);
+        Agent agent(engine, model, false);
+
+        // Load all messages
+        for (const auto& msg : request_body["messages"]) {
+            agent.add_message(msg["role"], msg["content"]);
+        }
+
+        // Execute
+        std::map<std::string, std::any> params;
+        if (request_body.contains("temperature")) {
+            params["temperature"] = request_body["temperature"].get<double>();
+        } else {
+            params["temperature"] = 1.0;
+        }
+        if (request_body.contains("max_tokens")) {
+            params["max_tokens"] = request_body["max_tokens"].get<int>();
+        } else {
+            params["max_tokens"] = -1;
+        }
+
+        auto result = agent.execute_safe(params);
+
+        // Build OpenAI response
+        json openai_response = build_openai_response(result, model);
+
+        res.set_content(openai_response.dump(), "application/json");
+        res.status = 200;
+    } catch (const std::exception& e) {
+        json error = {
+            {"error", {
+                {"code", "INTERNAL_ERROR"},
+                {"message", std::string("Error processing chat completion: ") + e.what()}
+            }}
+        };
+        res.status = 500;
+        res.set_content(error.dump(), "application/json");
+    }
+}
+
+void ApiServer::handle_list_models(const httplib::Request& req, httplib::Response& res) {
+    // Build list of all supported models from the map
+    json models_array = json::array();
+
+    for (const auto& [model_name, engine] : MODEL_ENGINE_MAP) {
+        models_array.push_back({
+            {"id", model_name},
+            {"object", "model"},
+            {"created", 1677649963},
+            {"owned_by", engine}
+        });
+    }
+
+    json response = {
+        {"object", "list"},
+        {"data", models_array}
+    };
+
+    res.set_content(response.dump(), "application/json");
+    res.status = 200;
 }
 
 void ApiServer::start() {

@@ -86,18 +86,50 @@ class SupabaseClient{
 
         // ===== Multi-Tenancy Authentication Methods =====
 
-        // Authenticate API key and return client_id
-        // Returns client_id if api_key_hash matches, nullopt otherwise
-        std::optional<std::string> authenticate_client(const std::string& api_key_hash);
-
-        // Create new client with hashed API key
+        // Create new client
         // Returns client_id on success, nullopt on failure
-        std::optional<std::string> create_client(const std::string& api_key_hash,
-                                                  const std::string& display_name);
+        std::optional<std::string> create_client(const std::string& display_name);
 
         // Set RLS session variable for this connection
         // Must be called before any queries to enforce Row Level Security
         void set_client_context(const std::string& client_id);
+
+        // ===== Session-Specific API Key Methods =====
+
+        struct ApiKeyAlias {
+            std::string key_hash;
+            std::string client_id;
+            std::optional<std::string> session_id;
+            std::string key_type;  // "base" or "session"
+            bool is_active;
+        };
+
+        // Authenticate API key (base or session) - ONLY authentication method
+        std::optional<ApiKeyAlias> authenticateApiKey(
+            const std::string& key_hash
+        );
+
+        // Create base API key for a client
+        std::optional<std::string> createBaseApiKey(
+            const std::string& client_id
+        );
+
+        // Create session-specific API key (returns unhashed key)
+        std::optional<std::string> createSessionApiKey(
+            const std::string& client_id,
+            const std::string& session_id
+        );
+
+        // List all API keys for a client
+        std::vector<ApiKeyAlias> listClientApiKeys(
+            const std::string& client_id
+        );
+
+        // Revoke an API key
+        bool revokeApiKey(
+            const std::string& key_hash,
+            const std::string& client_id
+        );
 };
 
 #endif // SUPABASE_CLIENT_HPP
