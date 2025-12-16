@@ -64,3 +64,13 @@ target_link_libraries(loom_api_stateless PRIVATE
     tool_system
     httplib::httplib
 )
+
+# ChatGPT Agent Test
+add_executable(chatgpt_agent_test
+    examples/chatgpt_agent_test.cpp
+    examples/CalculatorTool.cpp
+)
+
+target_link_libraries(chatgpt_agent_test PRIVATE
+    tool_system
+)

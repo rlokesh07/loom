@@ -270,6 +270,8 @@ void agent_call_agent(){
     registry->register_tool<CalculatorTool>();
     registry->register_tool<GitHubTool>();
     registry->register_tool<Base64Tool>();
+    registry->register_tool<WebSearchTool>();
+
 
     auto cleanCodeAgent = registry->register_tool<Agent>(true);
     cleanCodeAgent->set_name("cleanCodeAgent");
@@ -289,6 +291,32 @@ void agent_call_agent(){
 
     auto result = agent.execute_safe(params);
 }
+
+void agent_tool_call(){
+    auto registry = std::make_shared<ToolRegistry>();
+
+    registry->register_tool<CalculatorTool>();
+    registry->register_tool<GitHubTool>();
+    registry->register_tool<Base64Tool>();
+    registry->register_tool<WebSearchTool>();
+
+
+
+    Agent agent(true);
+
+    agent.set_tool_registry(registry);
+
+    std::map<std::string, std::any> params = {
+        {"message", std::string("tell me what 1245 * 12455 is.")},
+        {"system_prompt", std::string("You are a helpful assistant with access to tools. Use them when needed.")},
+        {"model", std::string("gpt-4o-mini")}
+    };
+
+
+    auto result = agent.execute_safe(params);
+}
+
+
 
 void test_ollama_agent() {
     std::cout << "\n=== Test: Ollama Agent ===" << std::endl;
@@ -454,7 +482,10 @@ int main() {
         //test_verbose_constructor();
         //test_system_prompt_with_verbose();
         //test_multi_agent_system_prompt_with_verbose();
-        agent_call_agent();
+        //agent_call_agent();
+        agent_tool_call();
+        
+
 
         // Ollama tests
         //test_ollama_agent();

@@ -169,37 +169,32 @@ fi
 # Test 7: Tool Usage - Calculator
 echo -e "\n${YELLOW}[7/10]${NC} Testing Tool Usage (Calculator)"
 echo -e "${BLUE}User: \"What is 127 multiplied by 89?\"${NC}"
-RESPONSE=$(curl -s -X POST "$RAILWAY_URL/api/sessions/$SESSION_ID/chat" \
-  -H "Authorization: Bearer $API_KEY" \
+RESPONSE=$(curl -s -X POST "$RAILWAY_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $SESSION_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"message": "What is 127 multiplied by 89? Use the calculator tool."}')
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{"role": "user", "content": "What is 127 multiplied by 89? Use the calculator tool to be precise."}]
+  }')
 
 debug_response "$RESPONSE"
 
 if command -v jq &> /dev/null; then
-    MESSAGE=$(echo "$RESPONSE" | jq -r '.message // empty' 2>/dev/null)
+    MESSAGE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
 else
-    MESSAGE=$(echo "$RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+    MESSAGE=$(echo "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | cut -d'"' -f4)
 fi
 
 if [ -n "$MESSAGE" ]; then
     echo -e "${GREEN}Assistant: $MESSAGE${NC}"
+
+    # Check if the answer contains the correct result (127 * 89 = 11303)
+    if echo "$MESSAGE" | grep -q "11303\|11,303"; then
+        echo -e "${CYAN}✓ Correct calculation (127 × 89 = 11,303)${NC}"
+    fi
 else
     echo -e "${RED}✗ No response${NC}"
     echo "Full response: $RESPONSE"
-fi
-
-if echo "$RESPONSE" | grep -q '"tool_calls"'; then
-    if command -v jq &> /dev/null; then
-        TOOL_NAME=$(echo "$RESPONSE" | jq -r '.tool_calls[0].tool_name // empty' 2>/dev/null)
-    else
-        TOOL_NAME=$(echo "$RESPONSE" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4)
-    fi
-    if [ -n "$TOOL_NAME" ]; then
-        echo -e "${CYAN}✓ Tool used: $TOOL_NAME${NC}"
-    fi
-else
-    echo -e "${YELLOW}⚠ No tool calls detected${NC}"
 fi
 
 # Test 8: Get Conversation History
