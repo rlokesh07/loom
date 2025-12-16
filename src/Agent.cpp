@@ -15,7 +15,7 @@ Agent::Agent(bool verbose)
     add_parameter(Parameter("name", ParameterType::STRING, "Name of the agent", false));
 
     add_parameter(Parameter("message", ParameterType::STRING,
-                           "User message to add to conversation", true));
+                           "User message to add to conversation", false));
 
     Parameter model_param("model", ParameterType::STRING,
                          "Model to use (e.g., gpt-3.5-turbo, gpt-4)", false);
@@ -53,7 +53,7 @@ Agent::Agent(std::shared_ptr<CompletionEngine> engine,
 
     
     add_parameter(Parameter("message", ParameterType::STRING,
-                           "User message to add to conversation", true));
+                           "User message to add to conversation", false));
 
 
     Parameter model_param("model", ParameterType::STRING,
@@ -101,14 +101,6 @@ ToolResult Agent::execute(const std::map<std::string, std::any>& params) {
     }
 
     try {
-        // Extract message
-        auto message_it = params.find("message");
-        if (message_it == params.end()) {
-            return ToolResult::Error("Missing required parameter: message");
-        }
-
-        std::string user_message = std::any_cast<std::string>(message_it->second);
-
         // Check for verbose parameter override
         auto verbose_it = params.find("verbose");
         if (verbose_it != params.end()) {
@@ -122,8 +114,12 @@ ToolResult Agent::execute(const std::map<std::string, std::any>& params) {
             conversation_history_.emplace_back("system", system_prompt);
         }
 
-        // Add user message to history
-        conversation_history_.emplace_back("user", user_message);
+        // Extract and add user message if provided
+        auto message_it = params.find("message");
+        if (message_it != params.end()) {
+            std::string user_message = std::any_cast<std::string>(message_it->second);
+            conversation_history_.emplace_back("user", user_message);
+        }
 
         // Extract model (use default model for this engine)
         std::string model = default_model_;
