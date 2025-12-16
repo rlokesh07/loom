@@ -704,6 +704,19 @@ std::string ApiServer::generate_random_id() {
 }
 
 json ApiServer::build_openai_response(const ToolResult& result, const std::string& model) {
+    // If there's an error, log it and return error response
+    if (!result.is_success()) {
+        std::string error_msg = result.get_error().value_or("Unknown error");
+        std::cerr << "Error in chat completion: " << error_msg << std::endl;
+
+        return {
+            {"error", {
+                {"code", "COMPLETION_ERROR"},
+                {"message", error_msg}
+            }}
+        };
+    }
+
     return {
         {"id", "chatcmpl-" + generate_random_id()},
         {"object", "chat.completion"},
@@ -716,7 +729,7 @@ json ApiServer::build_openai_response(const ToolResult& result, const std::strin
                     {"role", "assistant"},
                     {"content", result.get_message()}
                 }},
-                {"finish_reason", result.is_success() ? "stop" : "error"}
+                {"finish_reason", "stop"}
             }
         })},
         {"usage", {
