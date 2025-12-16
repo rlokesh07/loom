@@ -225,6 +225,12 @@ void ApiServer::configure_routes() {
             std::string model = body.value("model", "gpt-3.5-turbo");
             std::string system_prompt = body.value("system_prompt", "");
 
+            // Extract tools if provided
+            std::vector<std::string> tool_names;
+            if (body.contains("tools") && body["tools"].is_array()) {
+                tool_names = body["tools"].get<std::vector<std::string>>();
+            }
+
             // Create session in database
             auto new_session_id_opt = db_->createSession(engine, model, client_id, system_prompt);
 
@@ -259,6 +265,19 @@ void ApiServer::configure_routes() {
                 return;
             }
 
+            // Register tools if provided
+            std::vector<std::string> registered_tools;
+            if (!tool_names.empty()) {
+                for (const auto& tool_name : tool_names) {
+                    if (AvailableToolsRegistry::is_available(tool_name)) {
+                        registered_tools.push_back(tool_name);
+                    }
+                }
+                if (!registered_tools.empty()) {
+                    db_->registerTools(new_session_id, client_id, registered_tools);
+                }
+            }
+
             json response = {
                 {"session_id", new_session_id},
                 {"session_api_key", *session_key_opt},
@@ -267,6 +286,11 @@ void ApiServer::configure_routes() {
                 {"system_prompt", system_prompt},
                 {"created_at", format_timestamp(std::chrono::system_clock::now())}
             };
+
+            // Add tools to response if any were registered
+            if (!registered_tools.empty()) {
+                response["tools"] = registered_tools;
+            }
 
             res.status = 201;
             res.set_content(response.dump(), "application/json");
@@ -813,7 +837,20 @@ void ApiServer::handle_session_completion(
 
         // Create agent
         auto engine = create_engine(session.engine_type);
-        Agent agent(engine, session.model, false);
+        Agent agent(engine, session.model, true);
+
+        // Load and register tools for this session
+        auto tool_names = db_->getSessionTools(session_id, client_id);
+        if (!tool_names.empty()) {
+            auto registry = std::make_shared<ToolRegistry>();
+            for (const auto& tool_name : tool_names) {
+                auto tool = AvailableToolsRegistry::create_tool(tool_name);
+                if (tool) {
+                    registry->register_tool(tool);
+                }
+            }
+            agent.set_tool_registry(registry);
+        }
 
         // Set system prompt if exists
         if (!session.system_prompt.empty()) {
@@ -825,26 +862,38 @@ void ApiServer::handle_session_completion(
             agent.add_message(msg.role, msg.content);
         }
 
-        // Smart deduplication - only check tail of history
-        size_t history_size = history.size();
+        // Find new user messages that aren't in history
         auto request_messages = request_body["messages"];
-        size_t request_size = request_messages.size();
-
         std::vector<ChatMessage> new_messages;
+        std::string new_user_message;
 
-        // If request has more messages than history, new ones are at the end
-        if (request_size > history_size) {
-            for (size_t i = history_size; i < request_size; i++) {
-                std::string role = request_messages[i]["role"];
-                std::string content = request_messages[i]["content"];
+        // Find the last user message that's not in history
+        for (const auto& req_msg : request_messages) {
+            if (req_msg["role"] == "user") {
+                std::string content = req_msg["content"];
 
-                agent.add_message(role, content);
-                new_messages.push_back(ChatMessage(role, content));
+                // Check if this message is already in history
+                bool already_exists = false;
+                for (const auto& hist_msg : history) {
+                    if (hist_msg.role == "user" && hist_msg.content == content) {
+                        already_exists = true;
+                        break;
+                    }
+                }
+
+                // If it's new, use it as the message parameter
+                if (!already_exists) {
+                    new_user_message = content;
+                    new_messages.push_back(ChatMessage("user", content));
+                }
             }
         }
 
-        // Execute
+        // Execute with message parameter (matching chatgpt_agent_test.cpp pattern)
         std::map<std::string, std::any> params;
+        if (!new_user_message.empty()) {
+            params["message"] = new_user_message;
+        }
         if (request_body.contains("temperature")) {
             params["temperature"] = request_body["temperature"].get<double>();
         } else {
@@ -870,6 +919,12 @@ void ApiServer::handle_session_completion(
 
         // Build OpenAI response
         json openai_response = build_openai_response(result, session.model);
+
+        std::cerr << "=== FINAL RESPONSE TO CLIENT ===" << std::endl;
+        std::cerr << "Success: " << result.is_success() << std::endl;
+        std::cerr << "Message: " << result.get_message() << std::endl;
+        std::cerr << "Response JSON: " << openai_response.dump(2) << std::endl;
+        std::cerr << "=================================" << std::endl;
 
         res.set_content(openai_response.dump(), "application/json");
         res.status = 200;
@@ -911,7 +966,7 @@ void ApiServer::handle_stateless_completion(
 
         // Create agent
         auto engine = create_engine(engine_type);
-        Agent agent(engine, model, false);
+        Agent agent(engine, model, true);
 
         // Load all messages
         for (const auto& msg : request_body["messages"]) {
