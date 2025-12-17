@@ -16,11 +16,15 @@ API_KEY=$(curl -s -X POST https://loom-production.up.railway.app/api/clients \
 
 echo "⚠️  Save this key: $API_KEY"
 
-# 2. Create session
+# 2. Create session (optionally with tools)
 RESPONSE=$(curl -s -X POST https://loom-production.up.railway.app/api/sessions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d '{"engine":"chatgpt","model":"gpt-4o-mini"}')
+  -d '{
+    "engine": "chatgpt",
+    "model": "gpt-4o-mini",
+    "tools": ["calculator"]
+  }')
 
 SESSION_KEY=$(echo $RESPONSE | jq -r '.session_api_key')
 
@@ -55,14 +59,21 @@ base_key = requests.post(
 session_key = requests.post(
     "https://loom-production.up.railway.app/api/sessions",
     headers={"Authorization": f"Bearer {base_key}"},
-    json={"engine": "chatgpt", "model": "gpt-4o-mini"}
+    json={
+        "engine": "chatgpt",
+        "model": "gpt-4o-mini",
+        "system_prompt": "You are a helpful assistant with access to tools. Use them when needed.",
+        "tools": ["calculator"]  # Optional: enable tools
+    }
 ).json()["session_api_key"]
 
-# Use OpenAI SDK with session key (stateful conversation)
+# Use OpenAI SDK with session key (stateful conversation with tools)
 client = OpenAI(
     api_key=session_key,
     base_url="https://loom-production.up.railway.app/v1"
 )
+
+# Note: Session was created with tools=["calculator"], so agent can use calculator automatically
 
 response = client.chat.completions.create(
     model="gpt-4o-mini",
@@ -142,10 +153,21 @@ Response:
 ```bash
 POST /api/sessions
 Headers: Authorization: Bearer <base-key>
-Body: {"engine": "chatgpt", "model": "gpt-4o-mini"}
+Body: {
+  "engine": "chatgpt",
+  "model": "gpt-4o-mini",
+  "system_prompt": "You are a helpful assistant",
+  "tools": ["calculator", "web_search"]  // Optional: register tools during creation
+}
 ```
 
 Response includes `session_api_key` for OpenAI-compatible endpoints.
+
+All fields are optional except defaults:
+- `engine` - Default: "chatgpt"
+- `model` - Default: "gpt-3.5-turbo"
+- `system_prompt` - Optional system message
+- `tools` - Optional array of tool names to register immediately
 
 **List Sessions**
 ```bash
@@ -178,6 +200,10 @@ Body: {
   "max_tokens": 500
 }
 ```
+
+When tools are registered to the session, the agent automatically uses them when needed.
+The response follows OpenAI's format with tool calls handled internally - you receive
+the final answer after all tool executions complete.
 
 **Legacy Chat Endpoint**
 ```bash
@@ -225,6 +251,16 @@ GET /api/tools/available
 
 ### Register Tools to Session
 
+**Option 1: During Session Creation (Recommended)**
+```bash
+POST /api/sessions
+Body: {
+  "model": "gpt-4o-mini",
+  "tools": ["calculator", "web_search"]
+}
+```
+
+**Option 2: Add Tools to Existing Session**
 ```bash
 POST /api/sessions/{session_id}/tools
 Body: {"tools": ["calculator", "web_search"]}
@@ -318,14 +354,41 @@ curl $API_BASE_URL/api/sessions/$SESSION/history \
 
 ### Session with Tools
 
+**Method 1: Register Tools During Session Creation (Recommended)**
+
 ```bash
-# Create session
+# Create session with tools in one step
+RESPONSE=$(curl -s -X POST $API_BASE_URL/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "system_prompt": "You are a helpful assistant with access to tools. Use them when needed.",
+    "tools": ["calculator", "web_search"]
+  }')
+
+SESSION_KEY=$(echo $RESPONSE | jq -r '.session_api_key')
+
+# Send message using OpenAI-compatible endpoint - agent can use tools automatically
+curl -X POST $API_BASE_URL/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SESSION_KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{"role": "user", "content": "What is 42 times 17?"}]
+  }'
+```
+
+**Method 2: Add Tools to Existing Session**
+
+```bash
+# Create session first
 SESSION=$(curl -s -X POST $API_BASE_URL/api/sessions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -d '{"engine": "chatgpt", "model": "gpt-4o-mini"}' | jq -r '.session_id')
 
-# Register tools
+# Then register tools
 curl -X POST $API_BASE_URL/api/sessions/$SESSION/tools \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
@@ -429,6 +492,12 @@ Benefits:
 - Check `SUPABASE_URL` and `SUPABASE_KEY` are set
 - Verify migrations 001-006 are applied in order
 - Check Supabase project is active
+
+**Tools not working / Agent not using tools**
+- Verify tools were registered: check session creation response includes `"tools": [...]`
+- Ensure tool dependencies are set (e.g., `GITHUB_TOKEN` for github tool, `BRAVE_SEARCH_API_KEY` for web_search)
+- Tools are only used when needed - the LLM decides when to invoke them
+- Check server logs for verbose tool execution output (shows `[TOOL CALL]` messages)
 
 ---
 

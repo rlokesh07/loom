@@ -741,6 +741,27 @@ json ApiServer::build_openai_response(const ToolResult& result, const std::strin
         };
     }
 
+    // Try to extract usage info from the underlying API response
+    json usage_info = {
+        {"prompt_tokens", 0},
+        {"completion_tokens", 0},
+        {"total_tokens", 0}
+    };
+
+    try {
+        // The result.get_data() contains the full upstream API response (json)
+        auto full_response = result.try_get_data_as<json>();
+        if (full_response && full_response->contains("usage")) {
+            usage_info = (*full_response)["usage"];
+        }
+    } catch (...) {
+        // If we can't extract usage, fall back to estimation
+        std::string content = result.get_message();
+        int estimated_completion_tokens = std::max(1, static_cast<int>(content.length() / 4));
+        usage_info["completion_tokens"] = estimated_completion_tokens;
+        usage_info["total_tokens"] = estimated_completion_tokens;
+    }
+
     return {
         {"id", "chatcmpl-" + generate_random_id()},
         {"object", "chat.completion"},
@@ -756,11 +777,7 @@ json ApiServer::build_openai_response(const ToolResult& result, const std::strin
                 {"finish_reason", "stop"}
             }
         })},
-        {"usage", {
-            {"prompt_tokens", 0},
-            {"completion_tokens", 0},
-            {"total_tokens", 0}
-        }}
+        {"usage", usage_info}
     };
 }
 
