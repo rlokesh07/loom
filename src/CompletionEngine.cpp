@@ -70,10 +70,25 @@ std::vector<ChatMessage> CompletionEngine::extract_messages(const std::any& mess
     return messages;
 }
 std::string CompletionEngine::parse_completion_response(const std::string& response_str,
-                                                               json& out_full_response) const {
+                                                               json& out_full_response,
+                                                               TokenUsage* out_usage) const {
     // Parse response
     json response = json::parse(response_str);
     out_full_response = response;
+
+    // Extract token usage if requested and available
+    if (out_usage && response.contains("usage")) {
+        const auto& usage = response["usage"];
+        if (usage.contains("prompt_tokens")) {
+            out_usage->prompt_tokens = usage["prompt_tokens"].get<int>();
+        }
+        if (usage.contains("completion_tokens")) {
+            out_usage->completion_tokens = usage["completion_tokens"].get<int>();
+        }
+        if (usage.contains("total_tokens")) {
+            out_usage->total_tokens = usage["total_tokens"].get<int>();
+        }
+    }
 
     // Check for errors in error field
     if (response.contains("error")) {

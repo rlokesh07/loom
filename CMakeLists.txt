@@ -74,3 +74,12 @@ add_executable(chatgpt_agent_test
 target_link_libraries(chatgpt_agent_test PRIVATE
     tool_system
 )
+
+# Token Usage Validation Test
+add_executable(token_usage_validation
+    examples/token_usage_validation.cpp
+)
+
+target_link_libraries(token_usage_validation PRIVATE
+    tool_system
+)

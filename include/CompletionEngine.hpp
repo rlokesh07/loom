@@ -10,6 +10,15 @@
 using json = nlohmann::json;
 
 /**
+ * @brief Token usage metrics from LLM API responses
+ */
+struct TokenUsage {
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
+    int total_tokens = 0;
+};
+
+/**
  * @brief Message structure for chat conversations
  */
 struct ChatMessage {
@@ -72,10 +81,12 @@ public:
      *
      * @param response_str Raw API response string
      * @param out_full_response Output parameter for full JSON response
+     * @param out_usage Optional output parameter for token usage metrics (default: nullptr)
      * @return Extracted completion text or error message
      */
     std::string parse_completion_response(const std::string& response_str,
-                                         json& out_full_response) const;
+                                         json& out_full_response,
+                                         TokenUsage* out_usage = nullptr) const;
 
 protected:
     // Model context window limits (in tokens)
