@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "quint-code": {
+      "command": "/home/alarcafil/.local/bin/quint-code",
+      "args": [
+        "serve"
+      ],
+      "cwd": "/home/alarcafil/personal/loom",
+      "env": {
+        "QUINT_PROJECT_ROOT": "/home/alarcafil/personal/loom"
+      }
+    }
+  }
+}
