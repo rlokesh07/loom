@@ -547,6 +547,145 @@ docker run -p 8080:8080 \
 
 ---
 
+## Multi-Agent Workflows (Database Layer Only)
+
+### Overview
+
+The Loom API includes database-level support for agent-to-agent communication through **child sessions**. This allows one agent to delegate tasks to another specialized agent, with each agent maintaining its own conversation context.
+
+**⚠️ IMPORTANT**: While the database infrastructure is implemented, HTTP API endpoints for this feature are **not currently exposed**. This section documents the underlying architecture for future implementation.
+
+### Architecture
+
+#### Child Sessions
+
+When an agent needs to use another agent as a tool:
+
+1. **Parent Session**: The main orchestrator agent
+2. **Child Session**: A specialized agent registered as a tool to the parent
+3. **Isolated Context**: Each child maintains its own conversation history
+4. **Persistent Association**: Child sessions are linked to specific tool names in the parent
+
+#### Database Methods
+
+The `SupabaseClient` class provides these methods (see `include/SupabaseClient.hpp`):
+
+```cpp
+// Register a session as a tool for another session
+bool registerChildSession(
+    const std::string& parentSessionID,
+    const std::string& toolName,
+    const std::string& childSessionID,
+    const std::string& clientID
+);
+
+// Retrieve the child session ID for a specific tool
+std::optional<std::string> getChildSession(
+    const std::string& parentSessionID,
+    const std::string& toolName,
+    const std::string& clientID
+);
+
+// Remove child session association
+bool unregisterChildSession(
+    const std::string& parentSessionID,
+    const std::string& toolName,
+    const std::string& clientID
+);
+```
+
+### Use Cases
+
+When implemented via API endpoints, this feature would enable:
+
+1. **Task Specialization**
+   - Main agent delegates research to a researcher agent with web tools
+   - Main agent delegates calculations to a math specialist agent
+   - Main agent delegates code generation to a programming agent
+
+2. **Context Isolation**
+   - Each child agent maintains its own conversation history
+   - Parent only sees final results from child tool calls
+   - Prevents context pollution between different task types
+
+3. **Reusable Agents**
+   - Create specialized agent sessions once
+   - Register them as tools for multiple parent sessions
+   - Each maintains independent state
+
+### Example Architecture (Not Yet Implemented)
+
+If API endpoints were added, the workflow would be:
+
+```bash
+# 1. Create a researcher agent with web tools
+RESEARCHER_SESSION=$(curl -X POST $API_BASE_URL/api/sessions \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "tools": ["web_search", "web_fetch"]
+  }' | jq -r '.session_id')
+
+# 2. Create main orchestrator agent
+MAIN_SESSION=$(curl -X POST $API_BASE_URL/api/sessions \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"model": "gpt-4o-mini"}' | jq -r '.session_id')
+
+# 3. Register researcher as a tool (ENDPOINT NOT IMPLEMENTED)
+# This would call db_->registerChildSession() internally
+curl -X POST $API_BASE_URL/api/sessions/$MAIN_SESSION/tools/agent \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{
+    "source_session_id": "'$RESEARCHER_SESSION'",
+    "tool_name": "researcher",
+    "tool_description": "Agent that can search and read web content"
+  }'
+
+# 4. Main agent delegates to researcher (WOULD WORK AUTOMATICALLY)
+curl -X POST $API_BASE_URL/v1/chat/completions \
+  -H "Authorization: Bearer $SESSION_KEY" \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{
+      "role": "user",
+      "content": "Use the researcher to find the latest AI safety papers"
+    }]
+  }'
+```
+
+### Database Schema
+
+The `child_sessions` table tracks agent-to-agent relationships:
+
+```sql
+CREATE TABLE child_sessions (
+    parent_session_id UUID REFERENCES sessions(session_id),
+    tool_name TEXT,
+    child_session_id UUID REFERENCES sessions(session_id),
+    client_id UUID REFERENCES clients(client_id),
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (parent_session_id, tool_name)
+);
+```
+
+### Implementation Status
+
+- ✅ **Database layer**: Fully implemented in `SupabaseClient`
+- ✅ **Schema**: `child_sessions` table exists
+- ❌ **API endpoints**: Not exposed in `ApiServer_stateless.cpp`
+- ❌ **Tool wrapper**: No AgentTool class to wrap child sessions
+
+### Future Implementation
+
+To complete this feature, the following would be needed:
+
+1. **HTTP Endpoint**: `POST /api/sessions/{session_id}/tools/agent`
+2. **AgentTool Class**: Wrapper that executes child session agent
+3. **Tool Registry Integration**: Register child sessions like other tools
+4. **Cleanup Logic**: Delete child sessions when parent is deleted
+
+---
+
 ## License
 
 MIT
