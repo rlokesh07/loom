@@ -15,3 +15,25 @@ cmake-build-*/
 *.a
 *.exe
 *.out
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Continue IDE configs (may contain API keys)
+continue_config*.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node.js
+node_modules/
+
+# Test scripts with hardcoded endpoints/keys
+quick_test.py
+test_loom_openai_compat.py
